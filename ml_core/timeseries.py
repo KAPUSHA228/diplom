@@ -1,0 +1,244 @@
+"""
+Анализ временных рядов для отслеживания динамики студентов
+"""
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from typing import Dict, List, Optional
+
+
+def analyze_student_trajectory(df, student_id, time_col='semester', value_col='avg_grade'):
+    """
+    Анализ траектории одного студента во времени.
+    """
+    student_df = df[df['student_id'] == student_id].sort_values(time_col)
+
+    if len(student_df) < 2:
+        return {
+            'student_id': student_id,
+            'n_points': len(student_df),
+            'trend': 0,
+            'status': 'insufficient_data'
+        }
+
+    values = student_df[value_col].values
+    times = student_df[time_col].values
+
+    # Простой линейный тренд (коэффициент)
+    x = np.arange(len(values))
+    coeffs = np.polyfit(x, values, 1)
+    trend = coeffs[0]
+
+    # Классификация динамики
+    if trend > 0.1:
+        status = 'improving'
+    elif trend < -0.1:
+        status = 'declining'
+    else:
+        status = 'stable'
+
+    # Визуализация
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=times,
+        y=values,
+        mode='lines+markers',
+        name='Значения',
+        line=dict(color='blue')
+    ))
+
+    # Линия тренда
+    trend_line = coeffs[0] * x + coeffs[1]
+    fig.add_trace(go.Scatter(
+        x=times,
+        y=trend_line,
+        mode='lines',
+        name=f'Тренд (коэф: {trend:.3f})',
+        line=dict(dash='dash', color='red')
+    ))
+
+    fig.update_layout(
+        title=f'Траектория студента {student_id}: {value_col}',
+        xaxis_title=time_col,
+        yaxis_title=value_col
+    )
+
+    return {
+        'student_id': student_id,
+        'n_points': len(student_df),
+        'trend': trend,
+        'status': status,
+        'values': values.tolist(),
+        'times': times.tolist(),
+        'figure': fig
+    }
+
+
+def analyze_cohort_trajectory(df, cohort_col='year', time_col='semester', value_col='avg_grade'):
+    """
+    Анализ траекторий когорт (групп студентов) во времени.
+    """
+    cohorts = df.groupby(cohort_col).mean(numeric_only=True).reset_index()
+
+    fig = px.line(
+        cohorts,
+        x=time_col,
+        y=value_col,
+        color=cohort_col,
+        title=f'Сравнение когорт по {value_col}',
+        markers=True
+    )
+
+    return {
+        'cohort_data': cohorts,
+        'figure': fig
+    }
+
+
+def detect_negative_dynamics(df, student_id_col='student_id', time_col='semester',
+                             value_col='avg_grade', threshold=-0.05):
+    """
+    Выявление студентов с отрицательной динамикой.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        Данные с колонками student_id, semester, value_col
+    student_id_col : str
+        Название колонки с ID студента
+    time_col : str
+        Название колонки с временем (семестр)
+    value_col : str
+        Название колонки с анализируемым значением (оценка, стресс и т.д.)
+    threshold : float
+        Порог для определения отрицательной динамики (коэффициент тренда)
+
+    Returns:
+    --------
+    dict с результатами
+    """
+    # Проверяем наличие необходимых колонок
+    if time_col not in df.columns:
+        return {
+            'error': f"Колонка '{time_col}' не найдена в данных",
+            'all_students': pd.DataFrame(),
+            'at_risk_students': pd.DataFrame(),
+            'risk_percentage': 0
+        }
+
+    if value_col not in df.columns:
+        return {
+            'error': f"Колонка '{value_col}' не найдена в данных",
+            'all_students': pd.DataFrame(),
+            'at_risk_students': pd.DataFrame(),
+            'risk_percentage': 0
+        }
+
+    results = []
+
+    for student_id in df[student_id_col].unique():
+        student_df = df[df[student_id_col] == student_id].sort_values(time_col)
+
+        if len(student_df) >= 2:
+            x = np.arange(len(student_df))
+            values = student_df[value_col].values
+            coeffs = np.polyfit(x, values, 1)
+            trend = coeffs[0]
+
+            results.append({
+                student_id_col: student_id,
+                'trend': trend,
+                'at_risk': trend < threshold,
+                'n_observations': len(student_df),
+                'first_value': values[0],
+                'last_value': values[-1]
+            })
+
+    if not results:
+        return {
+            'all_students': pd.DataFrame(),
+            'at_risk_students': pd.DataFrame(),
+            'risk_percentage': 0,
+            'n_students_analyzed': 0
+        }
+
+    results_df = pd.DataFrame(results)
+
+    # Создаем колонку at_risk_students для фильтрации
+    at_risk = results_df[results_df['at_risk'] == True] if 'at_risk' in results_df.columns else pd.DataFrame()
+
+    return {
+        'all_students': results_df,
+        'at_risk_students': at_risk,
+        'risk_percentage': len(at_risk) / len(results_df) * 100 if len(results_df) > 0 else 0,
+        'n_students_analyzed': len(results_df),
+        'threshold': threshold
+    }
+
+
+def forecast_grades(student_history, periods=2, method='linear'):
+    """
+    Прогнозирование будущей успеваемости на основе истории.
+
+    Parameters:
+    -----------
+    student_history : list
+        История оценок
+    periods : int
+        Количество периодов для прогноза
+    method : str
+        'linear' — линейная экстраполяция, 'last' — последнее значение
+    """
+    if len(student_history) < 2:
+        return [student_history[-1]] * periods if student_history else [0] * periods
+
+    if method == 'linear':
+        x = np.arange(len(student_history))
+        y = np.array(student_history)
+        coeffs = np.polyfit(x, y, 1)
+
+        forecasts = []
+        for i in range(1, periods + 1):
+            forecast = coeffs[0] * (len(student_history) + i) + coeffs[1]
+            forecasts.append(max(2, min(5, forecast)))  # оценки от 2 до 5
+        return forecasts
+
+    elif method == 'last':
+        return [student_history[-1]] * periods
+
+    return [student_history[-1]] * periods
+
+
+def create_temporal_features(df, time_col='semester', student_id_col='student_id'):
+    """
+    Создает временные признаки для анализа динамики.
+
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        Данные с временной колонкой
+    time_col : str
+        Название колонки с временем
+    student_id_col : str
+        Название колонки с ID студента
+
+    Returns:
+    --------
+    pd.DataFrame с добавленными временными признаками
+    """
+    result_df = df.copy()
+
+    # Сортируем по студенту и времени
+    result_df = result_df.sort_values([student_id_col, time_col])
+
+    # Лаговые признаки (предыдущие значения)
+    result_df[f'{time_col}_lag1'] = result_df.groupby(student_id_col)[time_col].shift(1)
+
+    # Изменение между временными точками
+    for col in df.select_dtypes(include=[np.number]).columns:
+        if col != student_id_col and col != time_col:
+            result_df[f'{col}_change'] = result_df.groupby(student_id_col)[col].diff()
+            result_df[f'{col}_pct_change'] = result_df.groupby(student_id_col)[col].pct_change()
+
+    return result_df

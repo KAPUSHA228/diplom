@@ -1,0 +1,24 @@
+{
+  "id": "чупеп_20260321_133404_00f6ce",
+  "name": "чупеп",
+  "timestamp": "2026-03-21T13:34:04.840145",
+  "metrics": {
+    "f1": 0.9811320754716981,
+    "roc_auc": 0.9987487820001771,
+    "precision": 0.9811320754716981,
+    "recall": 0.9811320754716981
+  },
+  "features": [
+    "stress_level",
+    "satisfaction_score",
+    "cognitive_load",
+    "overall_satisfaction",
+    "psychological_wellbeing",
+    "avg_grade",
+    "max_grade"
+  ],
+  "model_name": "RF",
+  "n_samples": 1200,
+  "n_features": 0,
+  "description": "чупеп"
+}

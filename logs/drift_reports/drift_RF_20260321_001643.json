@@ -1,0 +1,110 @@
+{
+  "timestamp": "2026-03-21T00:16:43.842383",
+  "model_name": "RF",
+  "overall_drift": true,
+  "drift_percentage": 85.71428571428571,
+  "drifted_features": [
+    "stress_level",
+    "satisfaction_score",
+    "cognitive_load",
+    "overall_satisfaction",
+    "psychological_wellbeing",
+    "max_grade"
+  ],
+  "feature_reports": {
+    "stress_level": {
+      "type": "numerical",
+      "ks_statistic": 0.2896999685830977,
+      "p_value": 3.1783837638726896e-57,
+      "drifted": "True",
+      "ref_mean": 6.218772200620477,
+      "curr_mean": 4.8093481122900945,
+      "mean_diff_pct": 22.664025033587137,
+      "ref_std": 2.767973536634458,
+      "curr_std": 2.812850902373294
+    },
+    "satisfaction_score": {
+      "type": "numerical",
+      "ks_statistic": 0.2616870876531574,
+      "p_value": 1.1907528532748678e-46,
+      "drifted": "True",
+      "ref_mean": 2.4961162831332158,
+      "curr_mean": 3.0097875033159496,
+      "mean_diff_pct": 20.5788177279127,
+      "ref_std": 1.0862318862052993,
+      "curr_std": 1.1515772549015348
+    },
+    "cognitive_load": {
+      "type": "numerical",
+      "ks_statistic": 0.19580113100848257,
+      "p_value": 3.480612578665488e-26,
+      "drifted": "True",
+      "ref_mean": 4.460333255666726,
+      "curr_mean": 4.009365840986398,
+      "mean_diff_pct": 10.110621535002736,
+      "ref_std": 1.168579030113591,
+      "curr_std": 1.2164910663150994
+    },
+    "overall_satisfaction": {
+      "type": "numerical",
+      "ks_statistic": 0.166559849198869,
+      "p_value": 4.85636594319903e-19,
+      "drifted": "True",
+      "ref_mean": 2.7088557438491474,
+      "curr_mean": 2.9884783329522238,
+      "mean_diff_pct": 10.32253525268004,
+      "ref_std": 0.7747924955548249,
+      "curr_std": 0.816847646089264
+    },
+    "psychological_wellbeing": {
+      "type": "numerical",
+      "ks_statistic": 0.1450259189443921,
+      "p_value": 1.5775596903945145e-14,
+      "drifted": "True",
+      "ref_mean": 4.493851495021296,
+      "curr_mean": 5.027267916835785,
+      "mean_diff_pct": 11.869916538306995,
+      "ref_std": 1.6180993801133687,
+      "curr_std": 1.6411297289180873
+    },
+    "avg_grade": {
+      "type": "numerical",
+      "ks_statistic": 0.04349591580270185,
+      "p_value": 0.1060018554706509,
+      "drifted": "False",
+      "ref_mean": 3.484279925199228,
+      "curr_mean": 3.502804588430491,
+      "mean_diff_pct": 0.5316640347202811,
+      "ref_std": 0.2762282311946185,
+      "curr_std": 0.2840035494752396
+    },
+    "max_grade": {
+      "type": "numerical",
+      "ks_statistic": 0.07841109016650959,
+      "p_value": 0.0001498366937802655,
+      "drifted": "True",
+      "ref_mean": 4.49474426841997,
+      "curr_mean": 4.519086877134906,
+      "mean_diff_pct": 0.5415793927580492,
+      "ref_std": 0.3882670481350668,
+      "curr_std": 0.4113420796481123
+    }
+  },
+  "recommendations": [
+    "🚨 КРИТИЧЕСКИЙ ДРЕЙФ: требуется немедленное переобучение модели",
+    "Признаки с дрейфом: stress_level, satisfaction_score, cognitive_load, overall_satisfaction, psychological_wellbeing"
+  ],
+  "data_quality": {
+    "missing_values": {},
+    "outliers_percentage": {
+      "stress_level": 0.0,
+      "satisfaction_score": 0.0,
+      "cognitive_load": 0.0,
+      "overall_satisfaction": 0.0,
+      "psychological_wellbeing": 0.33333333333333337,
+      "avg_grade": 0.9166666666666666,
+      "max_grade": 0.08333333333333334
+    },
+    "new_categories": {}
+  }
+}
