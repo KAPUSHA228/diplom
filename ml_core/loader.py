@@ -116,3 +116,83 @@ def load_sheet(file_path: str, sheet_name: str) -> tuple:
     sheet_type = detect_sheet_type(sheet_name, df)
     df_processed, msg = preprocess_sheet(df, sheet_type)
     return df_processed, sheet_type, msg
+
+
+def preprocess_excel_data(file_path: str) -> tuple:
+    """
+    Загружает и обрабатывает весь Excel файл с опросами.
+    Возвращает объединённый DataFrame и сообщение о результате.
+
+    Parameters:
+    -----------
+    file_path : str
+        Путь к Excel файлу
+
+    Returns:
+    --------
+    tuple: (df, message)
+        df - объединённый DataFrame со всеми данными
+        message - сообщение о результате обработки
+    """
+    try:
+        xl = pd.ExcelFile(file_path)
+        sheet_names = xl.sheet_names
+
+        all_dfs = []
+        message_parts = []
+
+        for sheet_name in sheet_names:
+            # Загружаем лист
+            df_sheet = pd.read_excel(file_path, sheet_name=sheet_name)
+            sheet_type = detect_sheet_type(sheet_name)
+
+            # Обрабатываем
+            df_processed, msg = preprocess_sheet(df_sheet, sheet_type)
+            message_parts.append(f"{sheet_name}: {msg}")
+
+            # Добавляем информацию о листе
+            df_processed['_source_sheet'] = sheet_name
+            df_processed['_sheet_type'] = sheet_type
+
+            all_dfs.append(df_processed)
+
+        # Объединяем все листы по user_id
+        if all_dfs:
+            # Начинаем с первого листа
+            result_df = all_dfs[0]
+
+            # Постепенно мерджим остальные
+            for i, df_to_merge in enumerate(all_dfs[1:], 1):
+                # Определяем колонку для объединения
+                user_col = None
+                for col in ['user', 'user_id', 'VK_id']:
+                    if col in result_df.columns and col in df_to_merge.columns:
+                        user_col = col
+                        break
+
+                if user_col:
+                    # Мержим по user_id
+                    result_df = result_df.merge(
+                        df_to_merge,
+                        on=user_col,
+                        how='outer',
+                        suffixes=('', f'_{sheet_names[i]}')
+                    )
+                else:
+                    # Если нет общего ключа, просто добавляем
+                    result_df = pd.concat([result_df, df_to_merge], axis=1)
+
+            # Удаляем временные колонки
+            for col in ['_source_sheet', '_sheet_type']:
+                if col in result_df.columns:
+                    result_df = result_df.drop(columns=[col])
+
+            message = f"Обработано {len(sheet_names)} листов: " + "; ".join(message_parts[:3]) + (
+                "..." if len(message_parts) > 3 else "")
+
+            return result_df, message
+        else:
+            return None, "Нет данных для обработки"
+
+    except Exception as e:
+        return None, f"Ошибка при обработке Excel: {str(e)}"

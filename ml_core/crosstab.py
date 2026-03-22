@@ -36,7 +36,10 @@ def create_crosstab(df, row_var, col_var, values=None, aggfunc='count', normaliz
         raise ValueError(f"Переменная '{row_var}' не найдена в данных")
     if col_var not in df.columns:
         raise ValueError(f"Переменная '{col_var}' не найдена в данных")
-
+    for var in [row_var, col_var]:
+        if df[var].dtype in [np.number] and df[var].nunique() > 20:
+            raise ValueError(
+                f"Переменная '{var}' является числовой с {df[var].nunique()} уникальными значениями. Для кросс-таблицы используйте категориальные переменные или предварительно разбейте на группы (pd.cut/pd.qcut).")
     if values:
         # Агрегация по значениям (например, средняя успеваемость)
         table = pd.pivot_table(
@@ -80,10 +83,6 @@ def create_crosstab(df, row_var, col_var, values=None, aggfunc='count', normaliz
         xaxis_title=col_var,
         yaxis_title=row_var
     )
-
-    # ============================================================
-    # ИСПРАВЛЕННЫЙ БЛОК ДЛЯ STACKED BAR CHART
-    # ============================================================
 
     # Создаем копию таблицы и сбрасываем индекс
     table_for_bar = table.reset_index()

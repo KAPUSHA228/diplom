@@ -8,11 +8,7 @@ import streamlit as st
 import os
 import datetime
 from sklearn.model_selection import train_test_split
-
-try:
-    import seaborn as sns
-except ImportError:
-    sns = None
+import seaborn as sns
 
 
 def save_synthetic_data(df, filename=None, directory='analysis_data/synthetic'):
@@ -68,105 +64,148 @@ def save_data_for_monitoring(df, feature_cols, semester="spring_2026", directory
 
 # ---- Загрузка данных согласно ТЗ ----
 @st.cache_data(ttl=3600)
-def load_data(path=None, grades_path=None, questionnaires_path=None,
-              psych_tests_path=None, essays_path=None, generate_synthetic=True):
+def load_data(category: str = 'grades', n_students: int = 500, generate_two_sets: bool = False):
     """
-    Загружает данные согласно ТЗ из 4 источников:
-    1. Данные об успеваемости студентов
-    2. Данные по итогам анкетирования студентов
-    3. Данные по итогам психологического тестирования студентов
-    4. Эссе как учебная работа
+    Загружает синтетические данные для выбранной категории.
+
+    Parameters:
+    -----------
+    category : str
+        'grades', 'psychology', 'creativity', 'values',
+        'personality', 'activities', 'career'
+    n_students : int
+        Количество студентов
+    generate_two_sets : bool
+        Если True, возвращает (reference_data, new_data) для дрейфа
+
+    Returns:
+    --------
+    dict с данными
     """
-    from pathlib import Path
-
-    if generate_synthetic or all(p is None for p in [grades_path, questionnaires_path, psych_tests_path, essays_path]):
-        return _generate_synthetic_data_tz()
-
-    # Загрузка данных об успеваемости
-    if grades_path and Path(grades_path).exists():
-        grades_df = pd.read_csv(grades_path)
-    else:
-        grades_df = _generate_grades_data()
-
-    # Загрузка данных анкетирования
-    if questionnaires_path and Path(questionnaires_path).exists():
-        questionnaires_df = pd.read_csv(questionnaires_path)
-    else:
-        questionnaires_df = _generate_questionnaires_data()
-
-    # Загрузка данных психологического тестирования
-    if psych_tests_path and Path(psych_tests_path).exists():
-        psych_tests_df = pd.read_csv(psych_tests_path)
-    else:
-        psych_tests_df = _generate_psych_tests_data()
-
-    # Загрузка данных эссе
-    if essays_path and Path(essays_path).exists():
-        essays_df = pd.read_csv(essays_path)
-    else:
-        essays_df = _generate_essays_data()
-
-    # Агрегация данных по студентам
-    return _aggregate_student_features(grades_df, questionnaires_df, psych_tests_df, essays_df)
+    return generate_synthetic_data_by_category(category, n_students, generate_two_sets)
 
 
 def _generate_synthetic_data_tz():
-    """Генерирует синтетические данные, соответствующие структуре ТЗ."""
+    """
+    Генерирует синтетические данные, соответствующие структуре из ТЗ.
+    Создаёт единую таблицу со всеми признаками.
+    """
     np.random.seed(42)
     n_students = 1200
 
-    # Генерируем данные об успеваемости
-    grades_data = []
-    for student_id in range(n_students):
-        n_courses = np.random.randint(5, 10)
-        for course in range(n_courses):
-            grades_data.append({
-                'student_id': student_id,
-                'course_name': f'Course_{course}',
-                'grade': np.clip(np.random.normal(3.5, 0.8), 2, 5),
-                'semester': np.random.choice([1, 2]),
-                'brs_score': np.random.uniform(0, 100)
-            })
-    grades_df = pd.DataFrame(grades_data)
+    # ========== 1. Социодемография ==========
+    demographics = pd.DataFrame({
+        'student_id': range(n_students),
+        'age': np.random.randint(17, 25, n_students),
+        'gender': np.random.choice(['М', 'Ж'], n_students, p=[0.45, 0.55]),
+        'course': np.random.choice([1, 2, 3, 4], n_students, p=[0.3, 0.3, 0.25, 0.15]),
+        'university': 'Примерный университет',
+        'field_of_study': np.random.choice(
+            ['Социология', 'Психология', 'Экономика', 'Политология', 'Социальная работа'],
+            n_students
+        )
+    })
 
-    # Генерируем данные анкетирования
-    questionnaires_df = pd.DataFrame({
+    # ========== 2. Успеваемость (из ТЗ) ==========
+    grades = pd.DataFrame({
+        'student_id': range(n_students),
+        'avg_grade': np.clip(np.random.normal(3.8, 0.6, n_students), 2, 5),
+        'grade_std': np.random.uniform(0.2, 0.8, n_students),
+        'min_grade': np.random.choice([2, 3, 4, 5], n_students, p=[0.05, 0.25, 0.5, 0.2]),
+        'max_grade': np.random.choice([4, 5], n_students, p=[0.3, 0.7]),
+        'n_courses': np.random.randint(5, 12, n_students),
+        'avg_brs': np.random.uniform(60, 95, n_students),
+        'semester': np.random.choice([1, 2, 3, 4, 5, 6], n_students)
+    })
+
+    # ========== 3. Анкетирование (из ТЗ) ==========
+    questionnaires = pd.DataFrame({
         'student_id': range(n_students),
         'satisfaction_score': np.random.uniform(1, 5, n_students),
         'engagement_score': np.random.uniform(1, 5, n_students),
         'workload_perception': np.random.uniform(1, 5, n_students)
     })
 
-    # Генерируем данные психологического тестирования
-    psych_tests_df = pd.DataFrame({
+    # ========== 4. Психологическое тестирование (из ТЗ) ==========
+    psych_tests = pd.DataFrame({
         'student_id': range(n_students),
-        'stress_level': np.random.uniform(0, 10, n_students),
-        'motivation_score': np.random.uniform(0, 10, n_students),
-        'anxiety_score': np.random.uniform(0, 10, n_students)
+        'stress_level': np.random.uniform(1, 10, n_students),
+        'motivation_score': np.random.uniform(1, 10, n_students),
+        'anxiety_score': np.random.uniform(1, 10, n_students)
     })
 
-    # Генерируем данные эссе
-    essays_df = pd.DataFrame({
+    # ========== 5. Эссе (из ТЗ) ==========
+    essays = pd.DataFrame({
         'student_id': range(n_students),
-        'n_essays': np.random.randint(1, 5, n_students),
-        'avg_essay_grade': np.clip(np.random.normal(3.5, 0.7, n_students), 2, 5)
+        'n_essays': np.random.randint(1, 6, n_students),
+        'avg_essay_grade': np.clip(np.random.normal(3.5, 0.8, n_students), 2, 5)
     })
 
-    # Агрегируем
-    student_features = _aggregate_student_features(
-        grades_df, questionnaires_df, psych_tests_df, essays_df
-    )
-    student_features['semester'] = np.random.choice([1, 2], size=len(student_features), p=[0.5, 0.5])
+    # ========== 6. Тест креативности Вильямса ==========
+    creativity = pd.DataFrame({
+        'student_id': range(n_students),
+        'curiosity': np.random.randint(10, 40, n_students),  # Любознательность
+        'imagination': np.random.randint(10, 40, n_students),  # Воображение
+        'complexity': np.random.randint(10, 40, n_students),  # Сложность
+        'risk_taking': np.random.randint(10, 40, n_students),  # Склонность к риску
+        'creativity_total': np.random.randint(40, 160, n_students)  # Сумма
+    })
 
-    # Добавляем целевую переменную (риск)
+    # ========== 7. Ценности Шварца ==========
+    schwartz = pd.DataFrame({
+        'student_id': range(n_students),
+        'security': np.random.uniform(1, 7, n_students),  # Безопасность
+        'conformity': np.random.uniform(1, 7, n_students),  # Конформность
+        'tradition': np.random.uniform(1, 7, n_students),  # Традиция
+        'self_direction': np.random.uniform(1, 7, n_students),  # Самостоятельность
+        'stimulation': np.random.uniform(1, 7, n_students),  # Риск–новизна
+        'hedonism': np.random.uniform(1, 7, n_students),  # Гедонизм
+        'achievement': np.random.uniform(1, 7, n_students),  # Достижение
+        'power': np.random.uniform(1, 7, n_students),  # Власть–богатство
+        'benevolence': np.random.uniform(1, 7, n_students),  # Благожелательность
+        'universalism': np.random.uniform(1, 7, n_students)  # Универсализм
+    })
+
+    # ========== 8. Личностные опросы (соц1) ==========
+    personality = pd.DataFrame({
+        'student_id': range(n_students),
+        'teamwork': np.random.choice([1, 2, 3, 4, 5], n_students, p=[0.1, 0.2, 0.3, 0.25, 0.15]),
+        'leadership': np.random.choice([1, 2, 3, 4, 5], n_students),
+        'adaptability': np.random.choice([1, 2, 3, 4, 5], n_students),
+        'optimism': np.random.choice([1, 2, 3, 4, 5], n_students)
+    })
+
+    # ========== 9. Активность (соц4) ==========
+    activities = pd.DataFrame({
+        'student_id': range(n_students),
+        'research_projects': np.random.binomial(1, 0.3, n_students),
+        'sports': np.random.binomial(1, 0.4, n_students),
+        'volunteering': np.random.binomial(1, 0.25, n_students),
+        'creative_events': np.random.binomial(1, 0.35, n_students),
+        'student_council': np.random.binomial(1, 0.15, n_students)
+    })
+    activities['activity_score'] = activities[
+        ['research_projects', 'sports', 'volunteering', 'creative_events', 'student_council']].sum(axis=1)
+
+    # ========== 10. Объединяем всё ==========
+    result = demographics
+    for df in [grades, questionnaires, psych_tests, essays, creativity, schwartz, personality, activities]:
+        result = result.merge(df, on='student_id', how='left')
+
+    # ========== 11. Целевая переменная (риск) ==========
     risk_prob = (
-            (student_features['avg_grade'] < 3.0).astype(int) * 0.4 +
-            (student_features['stress_level'] > 7).astype(int) * 0.3 +
-            (student_features['satisfaction_score'] < 2.5).astype(int) * 0.3
+            (result['avg_grade'] < 3.0).astype(int) * 0.35 +
+            (result['stress_level'] > 7).astype(int) * 0.25 +
+            (result['satisfaction_score'] < 2.5).astype(int) * 0.2 +
+            (result['activity_score'] < 1).astype(int) * 0.2
     )
-    student_features['risk_flag'] = (risk_prob > 0.5).astype(int)
+    result['risk_flag'] = (risk_prob > 0.5).astype(int)
 
-    return student_features
+    # ========== 12. Добавляем композитные признаки ==========
+    from ml_core.features import add_composite_features
+    result = add_composite_features(result)
+
+    return result
 
 
 def _generate_grades_data():
@@ -326,3 +365,370 @@ def prepare_data_for_training(df, feature_cols, target_col='risk_flag', test_siz
     )
 
     return X_train, X_test, y_train, y_test
+
+
+def generate_synthetic_data_by_category(category: str, n_students: int = 500,
+                                        generate_two_sets: bool = False) -> dict:
+    """
+    Генерирует синтетические данные для конкретной категории.
+
+    Parameters:
+    -----------
+    category : str
+        'grades', 'psychology', 'creativity', 'values', 'personality',
+        'activities', 'career'
+    n_students : int
+        Количество студентов
+    generate_two_sets : bool
+        Если True, возвращает (reference_data, new_data) для дрейфа
+
+    Returns:
+    --------
+    dict с ключами:
+        - 'data': DataFrame с данными
+        - 'target': название целевой переменной
+        - 'target_values': значения целевой переменной (если generate_two_sets=False)
+        - 'reference': DataFrame эталонных данных (если generate_two_sets=True)
+        - 'new': DataFrame новых данных (если generate_two_sets=True)
+    """
+    np.random.seed(42)
+
+    if category == 'grades':
+        return _generate_grades_category(n_students, generate_two_sets)
+    elif category == 'psychology':
+        return _generate_psychology_category(n_students, generate_two_sets)
+    elif category == 'creativity':
+        return _generate_creativity_category(n_students, generate_two_sets)
+    elif category == 'values':
+        return _generate_values_category(n_students, generate_two_sets)
+    elif category == 'personality':
+        return _generate_personality_category(n_students, generate_two_sets)
+    elif category == 'activities':
+        return _generate_activities_category(n_students, generate_two_sets)
+    elif category == 'career':
+        return _generate_career_category(n_students, generate_two_sets)
+    else:
+        # Fallback
+        return _generate_grades_category(n_students, generate_two_sets)
+
+
+def _generate_grades_category(n_students: int, generate_two_sets: bool = False) -> dict:
+    """
+    Категория: Успеваемость
+    Целевая переменная: risk_flag (риск отчисления)
+    """
+    np.random.seed(42)
+
+    # Базовые признаки
+    data = pd.DataFrame({
+        'student_id': range(n_students),
+        'avg_grade': np.clip(np.random.normal(3.8, 0.6, n_students), 2, 5),
+        'grade_std': np.random.uniform(0.2, 0.8, n_students),
+        'min_grade': np.random.choice([2, 3, 4, 5], n_students, p=[0.05, 0.25, 0.5, 0.2]),
+        'max_grade': np.random.choice([4, 5], n_students, p=[0.3, 0.7]),
+        'n_courses': np.random.randint(5, 12, n_students),
+        'avg_brs': np.random.uniform(60, 95, n_students),
+        'attendance_rate': np.random.uniform(0.6, 1.0, n_students),
+        'semester': np.random.choice([1, 2, 3, 4, 5, 6], n_students)
+    })
+
+    # Целевая переменная: риск отчисления
+    risk_score = (
+            (data['avg_grade'] < 3.0).astype(int) * 0.4 +
+            (data['attendance_rate'] < 0.7).astype(int) * 0.3 +
+            (data['grade_std'] > 0.6).astype(int) * 0.3
+    )
+    data['risk_flag'] = (risk_score > 0.5).astype(int)
+
+    result = {
+        'data': data,
+        'target': 'risk_flag',
+        'target_values': data['risk_flag']
+    }
+
+    if generate_two_sets:
+        # Генерируем новые данные с небольшим смещением (дрейф)
+        np.random.seed(43)
+        new_data = data.copy()
+        # Имитируем дрейф: средняя оценка снижается, посещаемость падает
+        new_data['avg_grade'] = np.clip(new_data['avg_grade'] - np.random.normal(0.2, 0.1, n_students), 2, 5)
+        new_data['attendance_rate'] = np.clip(new_data['attendance_rate'] - np.random.normal(0.1, 0.05, n_students),
+                                              0.4, 1.0)
+        new_data['risk_flag'] = (
+                                        (new_data['avg_grade'] < 3.0).astype(int) * 0.4 +
+                                        (new_data['attendance_rate'] < 0.7).astype(int) * 0.3 +
+                                        (new_data['grade_std'] > 0.6).astype(int) * 0.3
+                                ) > 0.5
+
+        result['reference'] = data
+        result['new'] = new_data
+
+    return result
+
+
+def _generate_psychology_category(n_students: int, generate_two_sets: bool = False) -> dict:
+    """
+    Категория: Психологическое состояние
+    Целевая переменная: burnout_risk (риск выгорания)
+    """
+    np.random.seed(42)
+
+    data = pd.DataFrame({
+        'student_id': range(n_students),
+        'stress_level': np.random.uniform(1, 10, n_students),
+        'motivation_score': np.random.uniform(1, 10, n_students),
+        'anxiety_score': np.random.uniform(1, 10, n_students),
+        'sleep_quality': np.random.uniform(1, 5, n_students),
+        'social_support': np.random.uniform(1, 5, n_students)
+    })
+
+    # Риск выгорания: высокий стресс + низкая мотивация + плохой сон
+    burnout_score = (
+            (data['stress_level'] > 7).astype(int) * 0.4 +
+            (data['motivation_score'] < 4).astype(int) * 0.3 +
+            (data['sleep_quality'] < 2).astype(int) * 0.3
+    )
+    data['burnout_risk'] = (burnout_score > 0.5).astype(int)
+
+    result = {
+        'data': data,
+        'target': 'burnout_risk',
+        'target_values': data['burnout_risk']
+    }
+
+    if generate_two_sets:
+        np.random.seed(43)
+        new_data = data.copy()
+        # Имитируем дрейф: стресс растёт, мотивация падает
+        new_data['stress_level'] = np.clip(new_data['stress_level'] + np.random.normal(0.5, 0.2, n_students), 1, 10)
+        new_data['motivation_score'] = np.clip(new_data['motivation_score'] - np.random.normal(0.3, 0.2, n_students), 1,
+                                               10)
+        new_data['burnout_risk'] = (
+                                           (new_data['stress_level'] > 7).astype(int) * 0.4 +
+                                           (new_data['motivation_score'] < 4).astype(int) * 0.3 +
+                                           (new_data['sleep_quality'] < 2).astype(int) * 0.3
+                                   ) > 0.5
+
+        result['reference'] = data
+        result['new'] = new_data
+
+    return result
+
+
+def _generate_creativity_category(n_students: int, generate_two_sets: bool = False) -> dict:
+    """
+    Категория: Креативность (тест Вильямса)
+    Целевая переменная: high_creativity (высокая креативность)
+    """
+    np.random.seed(42)
+
+    data = pd.DataFrame({
+        'student_id': range(n_students),
+        'curiosity': np.random.randint(10, 40, n_students),  # Любознательность
+        'imagination': np.random.randint(10, 40, n_students),  # Воображение
+        'complexity': np.random.randint(10, 40, n_students),  # Сложность
+        'risk_taking': np.random.randint(10, 40, n_students),  # Склонность к риску
+        'creativity_total': np.random.randint(40, 160, n_students)
+    })
+
+    # Высокая креативность: сумма > 100
+    data['high_creativity'] = (data['creativity_total'] > 100).astype(int)
+
+    result = {
+        'data': data,
+        'target': 'high_creativity',
+        'target_values': data['high_creativity']
+    }
+
+    if generate_two_sets:
+        np.random.seed(43)
+        new_data = data.copy()
+        # Имитируем дрейф: общая креативность снижается
+        new_data['creativity_total'] = np.clip(new_data['creativity_total'] - np.random.normal(15, 10, n_students), 40,
+                                               160)
+        new_data['high_creativity'] = (new_data['creativity_total'] > 100).astype(int)
+
+        result['reference'] = data
+        result['new'] = new_data
+
+    return result
+
+
+def _generate_values_category(n_students: int, generate_two_sets: bool = False) -> dict:
+    """
+    Категория: Ценности Шварца
+    Целевая переменная: value_profile (тип профиля: 0-консервативный, 1-открытый)
+    """
+    np.random.seed(42)
+
+    data = pd.DataFrame({
+        'student_id': range(n_students),
+        'security': np.random.uniform(1, 7, n_students),  # Безопасность
+        'conformity': np.random.uniform(1, 7, n_students),  # Конформность
+        'tradition': np.random.uniform(1, 7, n_students),  # Традиция
+        'self_direction': np.random.uniform(1, 7, n_students),  # Самостоятельность
+        'stimulation': np.random.uniform(1, 7, n_students),  # Риск–новизна
+        'hedonism': np.random.uniform(1, 7, n_students),  # Гедонизм
+        'achievement': np.random.uniform(1, 7, n_students),  # Достижение
+        'power': np.random.uniform(1, 7, n_students),  # Власть–богатство
+        'benevolence': np.random.uniform(1, 7, n_students),  # Благожелательность
+        'universalism': np.random.uniform(1, 7, n_students)  # Универсализм
+    })
+
+    # Тип профиля: 0 - консервативный (высокие security, conformity, tradition)
+    #              1 - открытый (высокие self_direction, stimulation)
+    conservative_score = (data['security'] + data['conformity'] + data['tradition']) / 3
+    open_score = (data['self_direction'] + data['stimulation']) / 2
+    data['value_profile'] = (open_score > conservative_score).astype(int)
+
+    result = {
+        'data': data,
+        'target': 'value_profile',
+        'target_values': data['value_profile']
+    }
+
+    if generate_two_sets:
+        np.random.seed(43)
+        new_data = data.copy()
+        # Имитируем дрейф: смещение в сторону консервативных ценностей
+        new_data['security'] = np.clip(new_data['security'] + np.random.normal(0.3, 0.2, n_students), 1, 7)
+        new_data['conformity'] = np.clip(new_data['conformity'] + np.random.normal(0.3, 0.2, n_students), 1, 7)
+        new_data['self_direction'] = np.clip(new_data['self_direction'] - np.random.normal(0.2, 0.2, n_students), 1, 7)
+
+        conservative_score_new = (new_data['security'] + new_data['conformity'] + new_data['tradition']) / 3
+        open_score_new = (new_data['self_direction'] + new_data['stimulation']) / 2
+        new_data['value_profile'] = (open_score_new > conservative_score_new).astype(int)
+
+        result['reference'] = data
+        result['new'] = new_data
+
+    return result
+
+
+def _generate_personality_category(n_students: int, generate_two_sets: bool = False) -> dict:
+    """
+    Категория: Личностные опросы
+    Целевая переменная: leadership_potential (потенциал лидерства)
+    """
+    np.random.seed(42)
+
+    data = pd.DataFrame({
+        'student_id': range(n_students),
+        'teamwork': np.random.choice([1, 2, 3, 4, 5], n_students, p=[0.1, 0.2, 0.3, 0.25, 0.15]),
+        'leadership': np.random.choice([1, 2, 3, 4, 5], n_students),
+        'adaptability': np.random.choice([1, 2, 3, 4, 5], n_students),
+        'optimism': np.random.choice([1, 2, 3, 4, 5], n_students),
+        'discipline': np.random.choice([1, 2, 3, 4, 5], n_students)
+    })
+
+    # Потенциал лидерства: высокие leadership + teamwork + optimism
+    leadership_score = (data['leadership'] + data['teamwork'] + data['optimism']) / 3
+    data['leadership_potential'] = (leadership_score > 3.5).astype(int)
+
+    result = {
+        'data': data,
+        'target': 'leadership_potential',
+        'target_values': data['leadership_potential']
+    }
+
+    if generate_two_sets:
+        np.random.seed(43)
+        new_data = data.copy()
+        # Имитируем дрейф: снижение лидерских качеств
+        new_data['leadership'] = np.clip(new_data['leadership'] - np.random.normal(0.3, 0.2, n_students), 1, 5)
+        leadership_score_new = (new_data['leadership'] + new_data['teamwork'] + new_data['optimism']) / 3
+        new_data['leadership_potential'] = (leadership_score_new > 3.5).astype(int)
+
+        result['reference'] = data
+        result['new'] = new_data
+
+    return result
+
+
+def _generate_activities_category(n_students: int, generate_two_sets: bool = False) -> dict:
+    """
+    Категория: Активность (участие в мероприятиях)
+    Целевая переменная: active_participation (активный участник)
+    """
+    np.random.seed(42)
+
+    data = pd.DataFrame({
+        'student_id': range(n_students),
+        'research_projects': np.random.binomial(1, 0.3, n_students),
+        'sports': np.random.binomial(1, 0.4, n_students),
+        'volunteering': np.random.binomial(1, 0.25, n_students),
+        'creative_events': np.random.binomial(1, 0.35, n_students),
+        'student_council': np.random.binomial(1, 0.15, n_students),
+        'conferences': np.random.binomial(1, 0.2, n_students)
+    })
+
+    data['activity_score'] = data[['research_projects', 'sports', 'volunteering',
+                                   'creative_events', 'student_council', 'conferences']].sum(axis=1)
+    data['active_participation'] = (data['activity_score'] >= 3).astype(int)
+
+    result = {
+        'data': data,
+        'target': 'active_participation',
+        'target_values': data['active_participation']
+    }
+
+    if generate_two_sets:
+        np.random.seed(43)
+        new_data = data.copy()
+        # Имитируем дрейф: снижение активности
+        for col in ['research_projects', 'sports', 'volunteering', 'creative_events', 'student_council', 'conferences']:
+            new_data[col] = np.random.binomial(1, max(0.1, data[col].mean() - 0.1), n_students)
+
+        new_data['activity_score'] = new_data[['research_projects', 'sports', 'volunteering',
+                                               'creative_events', 'student_council', 'conferences']].sum(axis=1)
+        new_data['active_participation'] = (new_data['activity_score'] >= 3).astype(int)
+
+        result['reference'] = data
+        result['new'] = new_data
+
+    return result
+
+
+def _generate_career_category(n_students: int, generate_two_sets: bool = False) -> dict:
+    """
+    Категория: Карьерные намерения
+    Целевая переменная: career_clarity (определённость с карьерой)
+    """
+    np.random.seed(42)
+
+    data = pd.DataFrame({
+        'student_id': range(n_students),
+        'work_by_specialty': np.random.choice(['Да', 'Нет', 'Еще не решил'], n_students, p=[0.5, 0.2, 0.3]),
+        'desired_field': np.random.choice(['IT', 'Образование', 'Бизнес', 'Наука', 'Госслужба'], n_students),
+        'has_internship': np.random.binomial(1, 0.4, n_students),
+        'works_now': np.random.choice(['Да, по специальности', 'Да, не по специальности', 'Нет'], n_students,
+                                      p=[0.2, 0.3, 0.5])
+    })
+
+    # Определённость с карьерой: если работа по специальности ИЛИ твёрдое решение работать по специальности
+    data['career_clarity'] = (
+            ((data['work_by_specialty'] == 'Да') & (data['has_internship'] == 1)) |
+            (data['works_now'] == 'Да, по специальности')
+    ).astype(int)
+
+    result = {
+        'data': data,
+        'target': 'career_clarity',
+        'target_values': data['career_clarity']
+    }
+
+    if generate_two_sets:
+        np.random.seed(43)
+        new_data = data.copy()
+        # Имитируем дрейф: снижение определённости с карьерой
+        new_data['work_by_specialty'] = np.random.choice(['Да', 'Нет', 'Еще не решил'], n_students, p=[0.3, 0.3, 0.4])
+        new_data['has_internship'] = np.random.binomial(1, 0.3, n_students)
+        new_data['career_clarity'] = (
+                ((new_data['work_by_specialty'] == 'Да') & (new_data['has_internship'] == 1)) |
+                (new_data['works_now'] == 'Да, по специальности')
+        ).astype(int)
+
+        result['reference'] = data
+        result['new'] = new_data
+
+    return result

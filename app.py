@@ -1,28 +1,147 @@
-"""
-Система анализа социологических данных
-Гибридный подход: ML + LLM
-"""
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
+import time
+from tqdm import tqdm
 import os
-from datetime import datetime
+from sklearn.model_selection import train_test_split, StratifiedKFold
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+from sklearn.metrics import (
+    roc_auc_score, f1_score, precision_score, recall_score,
+    roc_curve, confusion_matrix,
+)
+import numpy as np
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+# Импортируем ВАШИ модули
+from ml_core.data import load_data, load_from_csv, prepare_data_for_training
+from ml_core.features import add_composite_features, get_base_features, select_features_for_model, preprocess_data
+from ml_core.analysis import (
+    correlation_analysis, cluster_students,
+    analyze_cluster_profiles, plot_clusters_pca
+)
+from ml_core.llm_interface import LLMInterface
+from ml_core.models import ModelTrainer
+from ml_core.evaluation import (
+    calculate_metrics, plot_roc_curves, plot_confusion_matrix,
+    plot_feature_importance, generate_shap_explanations
+)
+import plotly.graph_objects as go
+import plotly.subplots as sp
+from monitoring.logger import MLLogger
+from monitoring.drift_detector import DataDriftDetector, DriftMonitorThread, DriftMonitorScheduler
+
+
+def plot_drift_visualization(drift_report, reference_data, current_data):
+    """
+    Визуализация дрейфа для ключевых признаков
+    """
+    import plotly.subplots as sp
+
+    # Берем топ-4 признака с наибольшим дрейфом
+    drifted_features = drift_report['drifted_features'][:4]
+
+    if not drifted_features:
+        return None
+
+    # Создаем подграфики
+    fig = sp.make_subplots(
+        rows=2, cols=2,
+        subplot_titles=drifted_features,
+        vertical_spacing=0.15
+    )
+
+    for i, feature in enumerate(drifted_features):
+        row = i // 2 + 1
+        col = i % 2 + 1
+
+        # Добавляем распределение эталонных данных
+        fig.add_trace(
+            go.Histogram(
+                x=reference_data[feature],
+                name='Эталон',
+                opacity=0.7,
+                marker_color='blue',
+                nbinsx=30
+            ),
+            row=row, col=col
+        )
+
+        # Добавляем распределение новых данных
+        fig.add_trace(
+            go.Histogram(
+                x=current_data[feature],
+                name='Новые данные',
+                opacity=0.7,
+                marker_color='red',
+                nbinsx=30
+            ),
+            row=row, col=col
+        )
+
+    fig.update_layout(
+        height=600,
+        title_text="Сравнение распределений признаков",
+        showlegend=True
+    )
+
+    return fig
+
+
+# Инициализация session_state
+if 'results_saved' not in st.session_state:
+    st.session_state.results_saved = False
+    st.session_state.analysis_completed = False
+    st.session_state.df = None
+    st.session_state.all_features = None
+    st.session_state.cluster_labels = None
+    st.session_state.cluster_profiles = None
+    st.session_state.fig_clusters = None
+    st.session_state.fig_corr = None
+    st.session_state.X_train_sel = None
+    st.session_state.X_test_sel = None
+    st.session_state.y_train = None
+    st.session_state.y_test = None
+    st.session_state.selected_cols = None
+    st.session_state.cv_df = None
+    st.session_state.best_model = None
+    st.session_state.best_name = None
+    st.session_state.metrics = None
+    st.session_state.test_metrics = None
+    st.session_state.models_for_plot = None
+    st.session_state.fig_roc = None
+    st.session_state.y_pred = None
+    st.session_state.fig_cm = None
+    st.session_state.fig_fi = None
+    st.session_state.explanations = None
+    st.session_state.target_column = 'risk_flag'
+    st.session_state.data_category = 'grades'
+    if 'drift_detector' not in st.session_state:
+        st.session_state.drift_detector = None
+        st.session_state.drift_report = None
+        st.session_state.reference_data = None
+        if 'monitor_thread' not in st.session_state:
+            st.session_state.monitor_thread = None
+
+# Инициализация логгера
+ml_logger = MLLogger()
 
 # Настройка страницы
 st.set_page_config(
-    page_title="Анализ социологических данных",
+    page_title="Система мониторинга академических рисков",
     page_icon="📊",
     layout="wide"
 )
 
-st.title("📊 Анализ социологических данных")
-st.markdown("Гибридный подход: ML для структурированных данных, LLM для интерпретации")
+st.title("📊 Система мониторинга академических рисков студентов")
+st.markdown("---")
 
-# ============================================================
-# БОКОВАЯ ПАНЕЛЬ
-# ============================================================
+# Инициализация трейнера моделей
+trainer = ModelTrainer(models_dir='models')
 
+# Боковая панель с настройками
 with st.sidebar:
     st.header("⚙️ Настройки")
 
@@ -34,113 +153,270 @@ with st.sidebar:
         ["Синтетические данные", "CSV файл", "Excel файл (опросы)"]
     )
 
+    df = None
     uploaded_file = None
+    excel_file = None
 
-    if data_type == "CSV файл":
-        uploaded_file = st.file_uploader("Выберите CSV файл", type=['csv'])
+    if data_type == "Синтетические данные":
+        st.session_state.synthetic_category = st.selectbox(
+            "Категория данных",
+            ['grades', 'psychology', 'creativity', 'values', 'personality', 'activities', 'career'],
+            format_func=lambda x: {
+                'grades': '📚 Успеваемость (риск отчисления)',
+                'psychology': '🧠 Психологическое состояние (риск выгорания)',
+                'creativity': '🎨 Креативность (высокая креативность)',
+                'values': '💎 Ценности Шварца (тип профиля)',
+                'personality': '👤 Личностные опросы (потенциал лидерства)',
+                'activities': '⚡ Активность (активный участник)',
+                'career': '💼 Карьерные намерения (определённость)'
+            }.get(x, x)
+        )
+        st.session_state.synthetic_n_students = st.slider("Количество студентов", 100, 2000, 500)
+        st.session_state.generate_drift_data = st.checkbox("Сгенерировать данные для дрейфа", value=True)
+    elif data_type == "CSV файл":
+        uploaded_file = st.file_uploader(
+            "Выберите CSV файл",
+            type=['csv'],
+            help="Файл должен содержать колонки с признаками и целевую переменную 'risk_flag'"
+        )
     elif data_type == "Excel файл (опросы)":
-        uploaded_file = st.file_uploader("Выберите Excel файл", type=['xlsx', 'xls'])
+        excel_file = st.file_uploader(
+            "Выберите Excel файл",
+            type=['xlsx', 'xls'],
+            help="Файл с опросами (Вильямс, шварц, соц1-15)"
+        )
 
     st.markdown("---")
 
     # Настройки анализа
     st.subheader("🔧 Параметры анализа")
-    n_clusters = st.slider("Количество кластеров", 2, 8, 4)
+    n_clusters = st.slider("Количество кластеров", 2, 6, 3)
+    risk_threshold = st.slider("Порог риска", 0.0, 1.0, 0.5, 0.05)
+    use_hp_tuning = st.checkbox("Использовать оптимизацию гиперпараметров", value=False)
+    n_iter_tuning = st.slider("Итераций для оптимизации", 10, 50, 20) if use_hp_tuning else 20
 
     st.markdown("---")
+
+    st.subheader("🎛️ Дополнительные настройки")
+
+    # Выбор метрики для оптимизации
+    optimization_metric = st.selectbox(
+        "Метрика для оптимизации",
+        ["f1", "roc_auc", "precision", "recall"],
+        index=0
+    )
+
+    # Количество признаков для отбора
+    n_features_to_select = st.slider(
+        "Количество признаков в финальной модели",
+        min_value=3,
+        max_value=15,
+        value=7
+    )
+
+    # Выбор моделей для сравнения
+    st.write("**Модели для обучения:**")
+    use_lr = st.checkbox("Logistic Regression", value=True)
+    use_rf = st.checkbox("Random Forest", value=True)
+    use_xgb = st.checkbox("XGBoost", value=True)
+
+    # Порог для SHAP-объяснений
+    shap_top_n = st.slider(
+        "Количество факторов в объяснениях",
+        min_value=3,
+        max_value=10,
+        value=5
+    )
 
     # Кнопка запуска
     run_analysis = st.button("🚀 Запустить анализ", type="primary", use_container_width=True)
 
-# ============================================================
-# ОСНОВНАЯ ЛОГИКА
-# ============================================================
-
+# ==================== ВЫЧИСЛЕНИЯ (только при нажатии кнопки) ====================
 if run_analysis:
+    # Логируем запуск
+    ml_logger.log_event("analysis_started", {
+        "data_type": data_type,
+        "n_clusters": n_clusters,
+        "use_hp_tuning": use_hp_tuning
+    })
 
-    # ----- ШАГ 1: ЗАГРУЗКА ДАННЫХ -----
     with st.spinner("Загрузка данных..."):
-
         if data_type == "Синтетические данные":
-            # Генерируем простые синтетические данные
-            np.random.seed(42)
-            n = 500
-            df = pd.DataFrame({
-                'user_id': range(n),
-                'age': np.random.randint(18, 25, n),
-                'gender': np.random.choice(['М', 'Ж'], n),
-                'creativity': np.random.randint(40, 160, n),
-                'stress': np.random.uniform(1, 10, n),
-                'motivation': np.random.uniform(1, 10, n),
-                'grades': np.random.choice(['отлично', 'хорошо', 'удовлетворительно'], n, p=[0.2, 0.5, 0.3])
-            })
-            df['target'] = (df['grades'] == 'удовлетворительно').astype(int)
-            st.success(f"✅ Сгенерировано {len(df)} записей")
+            from ml_core.data import load_data
 
-        elif data_type == "CSV файл" and uploaded_file:
-            df = pd.read_csv(uploaded_file)
-            st.success(f"✅ Загружено {len(df)} записей, {len(df.columns)} колонок")
+            category = st.session_state.get('synthetic_category', 'grades')
+            n_students = st.session_state.get('synthetic_n_students', 500)
+            generate_drift_data = st.session_state.get('generate_drift_data', True)
 
-        elif data_type == "Excel файл (опросы)" and uploaded_file:
-            from ml_core.loader import detect_sheet_type, preprocess_sheet
+            result = load_data(
+                category=category,
+                n_students=n_students,
+                generate_two_sets=generate_drift_data
+            )
 
-            # Сохраняем временно
-            with open('temp.xlsx', 'wb') as f:
-                f.write(uploaded_file.getbuffer())
+            df = result['data']
+            st.session_state.data_category = category
+            st.session_state.target_column = result['target']
 
-            # Получаем список листов
-            import pandas as pd
+            if generate_drift_data and 'reference' in result and 'new' in result:
+                # Сохраняем эталон и новые данные для дрейфа
+                st.session_state.drift_reference = result['reference']
+                st.session_state.drift_new_data = result['new']
+                st.info(f"✅ Сгенерированы данные для дрейфа: {len(result['reference'])} эталон + {len(result['new'])} новые")
+            st.success(f"✅ Синтетические данные загружены (категория: {category}, целевая: {result['target']})")
+        elif data_type == "CSV файл":
+            if uploaded_file is not None:
+                df = load_from_csv(uploaded_file)
+                st.success("✅ Данные из CSV загружены")
+                # Для CSV пробуем определить целевую переменную
+                if 'risk_flag' in df.columns:
+                    st.session_state.target_column = 'risk_flag'
+                elif 'target' in df.columns:
+                    st.session_state.target_column = 'target'
+                else:
+                    st.session_state.target_column = 'risk_flag'
+                st.session_state.data_category = 'custom'
+            else:
+                st.error("❌ Пожалуйста, загрузите CSV файл")
+                st.stop()
+        elif data_type == "Excel файл (опросы)":
+            if excel_file is not None:
+                from ml_core.loader import preprocess_excel_data
 
-            xl = pd.ExcelFile('temp.xlsx')
-            sheet_names = xl.sheet_names
+                # Сохраняем временно
+                with open('temp_excel.xlsx', 'wb') as f:
+                    f.write(excel_file.getbuffer())
 
-            st.write(f"📑 Найдено листов: {len(sheet_names)}")
+                df, msg = preprocess_excel_data('temp_excel.xlsx')
 
-            # Выбор листа
-            selected_sheet = st.selectbox("Выберите лист для анализа", sheet_names)
-
-            # Загружаем выбранный лист
-            df_raw = pd.read_excel('temp.xlsx', sheet_name=selected_sheet)
-            st.write(f"📄 Лист '{selected_sheet}': {df_raw.shape}")
-
-            # Определяем тип листа
-            sheet_type = detect_sheet_type(selected_sheet)
-            st.info(f"🔍 Тип листа: {sheet_type}")
-
-            # Предобработка в зависимости от типа
-            df, info = preprocess_sheet(df_raw, sheet_type)
-            st.success(f"✅ {info}")
-
+                if df is not None:
+                    st.success(f"✅ {msg}")
+                    # Для Excel определяем целевую переменную
+                    if 'risk_flag' in df.columns:
+                        st.session_state.target_column = 'risk_flag'
+                    elif 'target' in df.columns:
+                        st.session_state.target_column = 'target'
+                    else:
+                        st.session_state.target_column = 'risk_flag'
+                    st.session_state.data_category = 'excel'
+                else:
+                    st.error(f"❌ {msg}")
+                    st.stop()
+            else:
+                st.error("❌ Пожалуйста, загрузите Excel файл")
+                st.stop()
         else:
-            st.error("❌ Пожалуйста, загрузите файл")
+            st.error("❌ Пожалуйста, загрузите CSV/xls/xlsx файл")
             st.stop()
 
-    # ----- ШАГ 2: РАЗВЕДОЧНЫЙ АНАЛИЗ -----
-    st.subheader("📊 Разведочный анализ")
+    target_col = st.session_state.get('target_column', 'risk_flag')
+    category = st.session_state.get('data_category', 'grades')
 
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Количество записей", len(df))
-    with col2:
-        st.metric("Количество признаков", len(df.columns))
-    with col3:
-        numeric_cols = df.select_dtypes(include=[np.number]).columns
-        st.metric("Числовые признаки", len(numeric_cols))
-    with col4:
-        if 'target' in df.columns:
-            risk_pct = df['target'].mean() * 100
-            st.metric("Доля целевого класса", f"{risk_pct:.1f}%")
+    # Определяем базовые признаки
+    base_features = get_base_features(df)
+    df = add_composite_features(df)
 
-    # Показываем первые строки
-    with st.expander("👁️ Просмотр данных"):
-        st.dataframe(df.head(10))
+    # Добавляем композитные признаки
+    composite_features = ['trend_grades', 'grade_stability', 'cognitive_load',
+                          'overall_satisfaction', 'psychological_wellbeing', 'academic_activity']
+    all_features = base_features + [f for f in composite_features if f in df.columns]
 
-    # ----- ШАГ 3: КОРРЕЛЯЦИОННЫЙ АНАЛИЗ -----
-    numeric_df = df.select_dtypes(include=[np.number])
-    if len(numeric_df.columns) > 1:
-        st.subheader("🔗 Корреляционный анализ")
+    # Логируем признаки
+    ml_logger.log_features(all_features)
 
-        corr = numeric_df.corr()
+    # Создаём целевую переменную, если её нет
+    if target_col not in df.columns:
+        st.warning(f"Целевая переменная '{target_col}' не найдена, создаем на основе данных")
+
+        if category == 'grades':
+            if 'avg_grade' in df.columns:
+                df[target_col] = (df['avg_grade'] < 3.0).astype(int)
+            elif 'Сумма' in df.columns:
+                df[target_col] = (df['Сумма'] < 80).astype(int)
+            else:
+                df[target_col] = np.random.binomial(1, 0.3, size=len(df))
+
+        elif category == 'psychology':
+            if 'stress_level' in df.columns and 'motivation_score' in df.columns:
+                burnout = (df['stress_level'] > 7).astype(int) * 0.5 + (df['motivation_score'] < 4).astype(int) * 0.5
+                df[target_col] = (burnout > 0.5).astype(int)
+            else:
+                df[target_col] = np.random.binomial(1, 0.3, size=len(df))
+
+        elif category == 'creativity':
+            if 'creativity_total' in df.columns:
+                df[target_col] = (df['creativity_total'] > 100).astype(int)
+            elif 'Сумма' in df.columns:
+                df[target_col] = (df['Сумма'] > 100).astype(int)
+            else:
+                df[target_col] = np.random.binomial(1, 0.3, size=len(df))
+
+        elif category == 'values':
+            # Для ценностей создаём профиль (открытый vs консервативный)
+            if all(c in df.columns for c in ['self_direction', 'stimulation', 'security', 'conformity']):
+                open_score = df['self_direction'] + df['stimulation']
+                conservative_score = df['security'] + df['conformity']
+                df[target_col] = (open_score > conservative_score).astype(int)
+            else:
+                df[target_col] = np.random.binomial(1, 0.5, size=len(df))
+
+        elif category == 'personality':
+            if 'leadership' in df.columns:
+                df[target_col] = (df['leadership'] > 3).astype(int)
+            else:
+                df[target_col] = np.random.binomial(1, 0.4, size=len(df))
+
+        elif category == 'activities':
+            if 'activity_score' in df.columns:
+                df[target_col] = (df['activity_score'] >= 3).astype(int)
+            else:
+                df[target_col] = np.random.binomial(1, 0.3, size=len(df))
+
+        elif category == 'career':
+            if 'work_by_specialty' in df.columns:
+                df[target_col] = (df['work_by_specialty'] == 'Да').astype(int)
+            else:
+                df[target_col] = np.random.binomial(1, 0.5, size=len(df))
+
+        else:
+            df[target_col] = np.random.binomial(1, 0.3, size=len(df))
+    else:
+        st.info(f"✅ Целевая переменная '{target_col}' уже присутствует в данных")
+
+        # Проверяем, что колонка только одна
+        if target_col in df.columns:
+            # Удаляем дубликаты, если они есть
+            if list(df.columns).count(target_col) > 1:
+                # Оставляем только первую колонку, остальные удаляем
+                first_col = True
+                cols_to_keep = []
+                for col in df.columns:
+                    if col == target_col:
+                        if first_col:
+                            cols_to_keep.append(col)
+                            first_col = False
+                        # пропускаем дубликаты
+                    else:
+                        cols_to_keep.append(col)
+                df = df[cols_to_keep]
+                st.warning(f"⚠️ Удалены дублирующиеся колонки '{target_col}'")
+
+    duplicate_cols = [col for col in df.columns if list(df.columns).count(col) > 1]
+    if duplicate_cols:
+        st.warning(f"⚠️ Найдены дублирующиеся колонки: {set(duplicate_cols)}. Удаляем...")
+        # Оставляем только первые вхождения
+        df = df.loc[:, ~df.columns.duplicated()]
+        st.success("✅ Дубликаты колонок удалены")
+
+    # Корреляционный анализ
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    if target_col in df.columns and len(numeric_cols) > 0:
+        if target_col not in numeric_cols:
+            numeric_cols.append(target_col)
+
+        corr = correlation_analysis(df, numeric_cols, target_col)
+        if corr.columns.duplicated().any():
+            corr = corr.loc[:, ~corr.columns.duplicated()]
 
         fig_corr = px.imshow(
             corr,
@@ -149,184 +425,707 @@ if run_analysis:
             color_continuous_scale="RdBu",
             title="Корреляционная матрица"
         )
-        st.plotly_chart(fig_corr, use_container_width=True)
+        st.session_state.fig_corr = fig_corr  # Сохраняем только если создали
+    else:
+        st.session_state.fig_corr = None  # Явно устанавливаем None
 
-    # ----- ШАГ 4: КЛАСТЕРИЗАЦИЯ -----
-    if len(numeric_df.columns) >= 2:
-        st.subheader("🎯 Кластеризация")
+    # Кластеризация
+    progress_bar = st.progress(0)
+    status_text = st.empty()
 
-        from sklearn.cluster import KMeans
-        from sklearn.preprocessing import StandardScaler
+    status_text.text("Подготовка данных...")
+    # Берем только числовые колонки для кластеризации
+    cluster_features = [c for c in all_features if c in df.columns and df[c].dtype in [np.number]]
+    if len(cluster_features) < 2:
+        cluster_features = numeric_cols[:min(5, len(numeric_cols))]
 
-        # Берем числовые колонки
-        X = numeric_df.fillna(numeric_df.median())
+    X_cluster = df[all_features].fillna(df[all_features].median())
+    progress_bar.progress(25)
 
-        # Масштабирование
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+    status_text.text("Масштабирование признаков...")
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_cluster)
+    progress_bar.progress(50)
 
-        # Кластеризация
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-        labels = kmeans.fit_predict(X_scaled)
-        df['cluster'] = labels
+    status_text.text("Выполнение кластеризации...")
+    cluster_labels, kmeans_model, scaler_cluster = cluster_students(
+        X_cluster,
+        n_clusters=n_clusters,
+        feature_cols=all_features
+    )
+    df['cluster'] = cluster_labels
+    progress_bar.progress(75)
 
-        # Профили кластеров
-        cluster_profiles = df.groupby('cluster')[numeric_df.columns].mean()
+    status_text.text("Анализ профилей...")
+    cluster_profiles = analyze_cluster_profiles(df, all_features)
+    fig_clusters = plot_clusters_pca(
+        X_cluster,
+        cluster_labels,
+        all_features)
+    progress_bar.progress(100)
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.write("**Профили кластеров:**")
-            st.dataframe(cluster_profiles)
+    progress_bar.empty()
+    status_text.empty()
 
-        with col2:
-            # PCA для визуализации
-            from sklearn.decomposition import PCA
 
-            pca = PCA(n_components=2, random_state=42)
-            X_pca = pca.fit_transform(X_scaled)
+    # Подготовка к обучению
+    if target_col in df.columns:
+        model_features = [c for c in all_features if c in df.columns and df[c].dtype in [np.number]]
+        if len(model_features) < 2:
+            model_features = numeric_cols
 
-            fig_clusters = px.scatter(
-                x=X_pca[:, 0],
-                y=X_pca[:, 1],
-                color=labels,
-                title=f"Кластеризация (PCA: {pca.explained_variance_ratio_[0]:.1%}, {pca.explained_variance_ratio_[1]:.1%})"
-            )
-            st.plotly_chart(fig_clusters, use_container_width=True)
+        X_resampled, y_resampled = preprocess_data(df, all_features, target_col)
 
-    # ----- ШАГ 5: ML МОДЕЛЬ (если есть целевая переменная) -----
-    if 'target' in df.columns:
-        st.subheader("🤖 Машинное обучение")
+        # Разделяем сбалансированные данные
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_resampled, y_resampled,
+            test_size=0.2,
+            random_state=42,
+            stratify=y_resampled
+        )
 
-        from sklearn.ensemble import RandomForestClassifier
-        from sklearn.model_selection import train_test_split
-        from sklearn.metrics import accuracy_score, f1_score, classification_report
+        # Отбор признаков
+        X_train_sel, selected_cols = select_features_for_model(
+            X_train, y_train,
+            final_n=n_features_to_select
+        )
+        X_test_sel = X_test[selected_cols]
 
-        # Подготовка данных
-        X = df[numeric_df.columns].fillna(df[numeric_df.columns].median())
-        y = df['target']
+        # Кросс-валидация
+        cv_results = trainer.cross_validate(X_train_sel, y_train)
+        cv_df = pd.DataFrame({
+            'Модель': list(cv_results.keys()),
+            'F1 (среднее)': [cv_results[m]['mean'] for m in cv_results],
+            'F1 (std)': [cv_results[m]['std'] for m in cv_results]
+        })
 
-        # Разделение
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        # Обучение лучшей модели
+        best_model, best_name, metrics = trainer.train_best_model(
+            X_train_sel, y_train, X_test_sel, y_test
+        )
+        models_to_train = {}
+        if use_lr:
+            models_to_train['LR'] = LogisticRegression(max_iter=1000)
+        if use_rf:
+            models_to_train['RF'] = RandomForestClassifier(random_state=42)
+        if use_xgb:
+            if use_hp_tuning:
+                st.subheader("⚙️ Оптимизация гиперпараметров XGBoost")
+                with st.spinner("Оптимизация гиперпараметров..."):
+                    xgb_tuned, best_params, best_cv_score = trainer.tune_xgboost(
+                        X_train_sel,
+                        y_train,
+                        n_iter=n_iter_tuning,
+                        cv_folds=3
+                    )
+                    st.success(f"✅ Оптимизация завершена. Лучший F1-score: {best_cv_score:.4f}")
+                    st.json(best_params)
+                    models_to_train['XGB'] = xgb_tuned
+            else:
+                models_to_train['XGB'] = XGBClassifier(eval_metric='logloss', random_state=42)
 
-        # Обучение
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
-        model.fit(X_train, y_train)
+        trainer.models = models_to_train
 
-        # Оценка
-        y_pred = model.predict(X_test)
+        # Сохраняем модель
+        model_path, metadata = trainer.save_model(
+            best_model, best_name, metrics, selected_cols
+        )
+        st.info(f"💾 Модель сохранена: {model_path}")
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Accuracy", f"{accuracy_score(y_test, y_pred):.3f}")
-        with col2:
-            st.metric("F1-score", f"{f1_score(y_test, y_pred):.3f}")
-        with col3:
-            st.metric("Важных признаков", len(numeric_df.columns))
+        # Логируем результаты
+        ml_logger.log_model_metrics(best_name, metrics)
+
+        # Метрики на тесте
+        test_metrics = metrics['test']
+
+        # ROC-кривая
+        models_for_plot = {}
+        if use_lr and 'LR' in trainer.models:
+            models_for_plot['LR'] = trainer.models['LR']
+        if use_rf and 'RF' in trainer.models:
+            models_for_plot['RF'] = trainer.models['RF']
+        if use_xgb and 'XGB' in trainer.models:
+            models_for_plot['XGB'] = trainer.models['XGB']
+
+        for name, model in models_for_plot.items():
+            model.fit(X_train_sel, y_train)
+
+        if len(models_for_plot) > 0:
+            fig_roc = plot_roc_curves(models_for_plot, X_test_sel, y_test)
+        else:
+            fig_roc = None
+
+        # Confusion Matrix
+        y_pred = best_model.predict(X_test_sel)
+        fig_cm = plot_confusion_matrix(y_test, y_pred, best_name)
 
         # Важность признаков
-        if hasattr(model, 'feature_importances_'):
-            importance_df = pd.DataFrame({
-                'feature': numeric_df.columns,
-                'importance': model.feature_importances_
-            }).sort_values('importance', ascending=False).head(10)
+        fig_fi = plot_feature_importance(best_model, selected_cols)
 
-            fig_imp = px.bar(
-                importance_df,
-                x='importance',
-                y='feature',
-                orientation='h',
-                title='Важность признаков'
+        # После того как получили best_model и selected_cols
+        if st.session_state.drift_detector is None:
+            # Отбираем нужные признаки
+            reference_real = df[selected_cols].copy()
+
+            st.session_state.drift_detector = DataDriftDetector(
+                reference_data=reference_real,
+                model_name=best_name,
+                threshold=0.05,
+                model_metadata={
+                    'numerical_features': selected_cols,
+                    'categorical_features': [],
+                    'baseline_metrics': test_metrics
+                }
             )
-            st.plotly_chart(fig_imp, use_container_width=True)
+            st.session_state.reference_data = reference_real
 
-    # ----- ШАГ 6: LLM ИНТЕРПРЕТАЦИЯ -----
-    st.markdown("---")
-    st.subheader("🤖 AI-интерпретация")
+        # SHAP объяснения
+        X_test_df = pd.DataFrame(X_test_sel, columns=selected_cols)
+        explanations = generate_shap_explanations(
+            best_model,
+            X_test_df,
+            selected_cols,
+            threshold=risk_threshold,
+            top_n=shap_top_n
+        )
 
-    from ml_core.llm_interface import LLMInterface
+        # ✅ СОХРАНЯЕМ ВСЁ В SESSION_STATE
+        st.session_state.analysis_completed = True
+        st.session_state.results_saved = True
+        st.session_state.df = df
+        st.session_state.all_features = all_features
+        st.session_state.cluster_labels = cluster_labels
+        st.session_state.cluster_profiles = cluster_profiles
+        st.session_state.fig_clusters = fig_clusters
+        st.session_state.X_train_sel = X_train_sel
+        st.session_state.X_test_sel = X_test_sel
+        st.session_state.y_train = y_train
+        st.session_state.y_test = y_test
+        st.session_state.selected_cols = selected_cols
+        st.session_state.cv_df = cv_df
+        st.session_state.best_model = best_model
+        st.session_state.best_name = best_name
+        st.session_state.metrics = metrics
+        st.session_state.test_metrics = test_metrics
+        st.session_state.models_for_plot = models_for_plot
+        st.session_state.fig_roc = fig_roc
+        st.session_state.y_pred = y_pred
+        st.session_state.fig_cm = fig_cm
+        st.session_state.fig_fi = fig_fi
+        st.session_state.explanations = explanations
 
-    llm = LLMInterface(provider='yandex')
+# ==================== ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ (всегда, если есть данные) ====================
+if st.session_state.analysis_completed:
+    df = st.session_state.df
+    all_features = st.session_state.all_features
+    target_col = st.session_state.get('target_column', 'risk_flag')
 
-    # Кнопка для интерпретации кластеров
-    if 'cluster_profiles' in locals():
-        if st.button("📊 Интерпретировать кластеры"):
-            with st.spinner("AI анализирует..."):
-                # Формируем краткое описание
-                profile_text = cluster_profiles.round(2).to_string()
-                prompt = f"""
-                Проанализируй следующие данные о {n_clusters} кластерах студентов.
+    # Информация о данных
+    st.subheader("📋 Информация о данных")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Всего студентов", len(df))
+    with col2:
+        if target_col in df.columns:
+            risk_count = df[target_col].sum()
+            st.metric("Целевая переменная", f"{risk_count} / {len(df)}")
+    with col3:
+        if target_col in df.columns:
+            risk_pct = (df[target_col].sum() / len(df)) * 100
+            st.metric("Процент целевого класса", f"{risk_pct:.1f}%")
+    with col4:
+        st.metric("Признаков", len(all_features))
 
-                Данные (средние значения по кластерам):
-                {profile_text}
+    st.success(f"✅ Используется {len(all_features)} признаков")
 
-                Задача:
-                1. Дай каждому кластеру короткое название
-                2. Опиши ключевые характеристики каждого кластера
-                3. Сравни кластеры между собой
+    # Корреляционный анализ
+    if st.session_state.fig_corr is not None:
+        st.subheader("🔗 Корреляционный анализ")
+        st.plotly_chart(st.session_state.fig_corr)
 
-                Ответ должен быть на русском языке.
-                """
+    # Кластеризация
+    st.subheader("🎯 Кластеризация студентов")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("**Профили кластеров:**")
+        st.dataframe(st.session_state.cluster_profiles)
+    with col2:
+        st.plotly_chart(st.session_state.fig_clusters)
 
-                response = llm.complete(prompt)
-                st.markdown(response)
+    # Выбранные признаки
+    st.subheader("📊 Выбранные признаки")
+    st.write(", ".join(st.session_state.selected_cols))
 
-    # Кнопка для общего отчета
-    if st.button("📝 Сгенерировать отчет"):
-        with st.spinner("Генерация отчета..."):
-            # Собираем информацию
-            info = f"""
-            Данные: {len(df)} записей, {len(df.columns)} колонок
-            Числовых признаков: {len(numeric_df.columns)}
-            Кластеров: {n_clusters}
-            """
-            if 'target' in df.columns:
-                info += f"\nЦелевая переменная: распределение {df['target'].value_counts().to_dict()}"
+    # Кросс-валидация
+    st.subheader("📊 Кросс-валидация")
+    st.dataframe(st.session_state.cv_df)
 
-            prompt = f"""
-            На основе анализа данных составь краткий исследовательский отчет.
+    # Метрики на тесте
+    st.subheader("📈 Метрики на тестовой выборке")
+    test_metrics = st.session_state.test_metrics
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("F1-score", f"{test_metrics['f1']:.4f}")
+    with col2:
+        st.metric("ROC-AUC", f"{test_metrics['roc_auc']:.4f}")
+    with col3:
+        st.metric("Precision", f"{test_metrics['precision']:.4f}")
+    with col4:
+        st.metric("Recall", f"{test_metrics['recall']:.4f}")
 
-            Информация о данных:
-            {info}
+    # ROC-кривая
+    if st.session_state.fig_roc:
+        st.plotly_chart(st.session_state.fig_roc)
 
-            Выводы:
-            - Какие основные паттерны видны в данных?
-            - Какие неожиданные связи обнаружились?
-            - Что стоит исследовать дальше?
+    # Confusion Matrix
+    st.plotly_chart(st.session_state.fig_cm)
 
-            Ответ должен быть на русском языке.
-            """
+    # Важность признаков
+    if st.session_state.fig_fi:
+        st.plotly_chart(st.session_state.fig_fi)
 
-            response = llm.complete(prompt)
-            st.markdown(response)
+    st.subheader("📊 Продвинутый анализ")
 
-    # ----- ШАГ 7: ЭКСПОРТ -----
-    st.markdown("---")
-    st.subheader("💾 Экспорт")
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📈 Кросс-таблицы",
+        "📁 История экспериментов",
+        "📉 Временные ряды",
+        "🔧 Обработка пропусков"
+    ])
 
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        "📥 Скачать данные (CSV)",
-        csv,
-        f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-        "text/csv"
-    )
+    with tab1:
+        st.write("### Кросс-таблицы")
 
+        # Выбор переменных для кросс-таблицы
+        all_cols = df.columns.tolist()
+
+        # Определяем категориальные колонки (с <20 уникальными значениями)
+        categorical_cols = []
+        for col in all_cols:
+            n_unique = df[col].nunique()
+            # Для числовых колонок — только если уникальных значений мало
+            if n_unique < 20:
+                categorical_cols.append(col)
+
+        # Если нет категориальных, предлагаем сгенерировать бины
+        if len(categorical_cols) < 2:
+            st.warning("⚠️ Недостаточно категориальных колонок для кросс-таблицы")
+            st.info("Вы можете выбрать числовые колонки, они будут автоматически разбиты на группы")
+
+            # Разрешаем любые колонки, но с предупреждением
+            row_var = st.selectbox("Переменная для строк", all_cols)
+            col_var = st.selectbox("Переменная для столбцов", all_cols)
+            value_var = st.selectbox("Переменная для агрегации (опционально)", ["None"] + all_cols)
+
+            use_binning = st.checkbox("Автоматически разбить на группы (для числовых колонок)", value=True)
+
+            if st.button("Построить кросс-таблицу"):
+                with st.spinner("Построение кросс-таблицы..."):
+                    from ml_core.crosstab import create_crosstab
+
+                    df_work = df.copy()
+
+                    # Бинаризуем числовые колонки, если нужно
+                    if use_binning:
+                        for var in [row_var, col_var]:
+                            if var in df_work.columns and df_work[var].dtype in [np.number] and df_work[var].nunique() > 10:
+                                # Разбиваем на квартили или децили
+                                df_work[f"{var}_group"] = pd.qcut(df_work[var], q=4,
+                                                                  labels=['Низкий', 'Ниже среднего', 'Выше среднего',
+                                                                          'Высокий'], duplicates='drop')
+                                if var == row_var:
+                                    row_var = f"{var}_group"
+                                else:
+                                    col_var = f"{var}_group"
+
+                    if value_var != "None":
+                        result = create_crosstab(df_work, row_var, col_var, values=value_var, aggfunc='mean')
+                    else:
+                        result = create_crosstab(df_work, row_var, col_var)
+
+                    st.dataframe(result['table'])
+
+                    if result['chi2_test']:
+                        st.write(f"**Хи-квадрат тест:** p-value = {result['chi2_test']['p_value']:.4f}")
+                        st.write(
+                            f"**Статистически значимо:** {'✅ Да' if result['chi2_test']['significant'] else '❌ Нет'}")
+
+                    if result['table'].shape[0] * result['table'].shape[1] < 1000:
+                        st.plotly_chart(result['heatmap'], use_container_width=True)
+                        st.plotly_chart(result['stacked_bar'], use_container_width=True)
+                    else:
+                        st.info("Графики скрыты для производительности (слишком большая таблица)")
+        else:
+            # Есть категориальные колонки — нормальная работа
+            row_var = st.selectbox("Переменная для строк", categorical_cols)
+            col_var = st.selectbox("Переменная для столбцов", categorical_cols)
+            value_var = st.selectbox("Переменная для агрегации (опционально)", ["None"] + all_cols)
+
+            if st.button("Построить кросс-таблицу"):
+                with st.spinner("Построение кросс-таблицы..."):
+                    from ml_core.crosstab import create_crosstab
+
+                    if value_var != "None":
+                        result = create_crosstab(df, row_var, col_var, values=value_var, aggfunc='mean')
+                    else:
+                        result = create_crosstab(df, row_var, col_var)
+
+                    st.dataframe(result['table'])
+
+                    if result['chi2_test']:
+                        st.write(f"**Хи-квадрат тест:** p-value = {result['chi2_test']['p_value']:.4f}")
+                        st.write(
+                            f"**Статистически значимо:** {'✅ Да' if result['chi2_test']['significant'] else '❌ Нет'}")
+
+                    if result['table'].shape[0] * result['table'].shape[1] < 1000:
+                        st.plotly_chart(result['heatmap'], use_container_width=True)
+                        st.plotly_chart(result['stacked_bar'], use_container_width=True)
+                    else:
+                        st.info("Графики скрыты для производительности (слишком большая таблица)")
+    with tab2:
+        st.write("### История экспериментов")
+
+        from ml_core.experiment_tracker import ExperimentTracker
+
+        tracker = ExperimentTracker()
+        experiments = tracker.list_experiments()
+
+        if not experiments.empty:
+            st.dataframe(experiments)
+
+            selected_exp = st.selectbox("Выберите эксперимент для загрузки", experiments['id'].tolist())
+            if st.button("Загрузить эксперимент"):
+                exp_data = tracker.load_experiment(selected_exp)
+                st.json(exp_data['metrics'])
+                if 'model' in exp_data:
+                    st.success(f"Модель загружена: {exp_data['model_name']}")
+        else:
+            st.info("Нет сохраненных экспериментов")
+
+        # Кнопка сохранения текущего эксперимента
+        exp_name = st.text_input("Название эксперимента")
+        if st.button("Сохранить текущий анализ") and exp_name:
+            exp_data = {
+                'metrics': test_metrics,
+                'features': st.session_state.selected_cols,
+                'model_name': st.session_state.best_name if st.session_state.best_name else 'unknown',
+                'n_samples': len(st.session_state.df) if st.session_state.df is not None else 0,
+                'description': exp_name
+            }
+            exp_id = tracker.save_experiment(exp_name, exp_data)
+            st.success(f"Эксперимент сохранен: {exp_id}")
+
+    with tab3:
+        st.write("### Анализ временных рядов")
+
+        from ml_core.timeseries import detect_negative_dynamics, analyze_student_trajectory
+
+        # Проверяем наличие необходимых колонок
+        if 'semester' not in df.columns:
+            st.warning("⚠️ Для анализа временных рядов нужна колонка 'semester'")
+            st.info("Вы можете добавить семестр в данные или использовать синтетическую генерацию с semester")
+
+            # Предлагаем сгенерировать семестры
+            if st.button("Сгенерировать тестовые семестры"):
+                # Добавляем искусственные семестры
+                df['semester'] = np.random.choice([1, 2, 3], size=len(df), p=[0.4, 0.3, 0.3])
+                st.success("Добавлена колонка 'semester' с тестовыми значениями")
+                st.rerun()
+        else:
+            # Проверяем наличие колонки для анализа
+            available_metrics = [c for c in df.columns if c not in ['student_id', 'semester', 'cluster', target_col]]
+            numeric_metrics = [c for c in available_metrics if df[c].dtype in [np.number]]
+
+            if not numeric_metrics:
+                st.warning("Нет числовых колонок для анализа динамики")
+            else:
+                value_col = st.selectbox("Показатель для анализа", numeric_metrics)
+
+                if st.button("Выявить студентов с отрицательной динамикой"):
+                    with st.spinner("Анализ..."):
+                        dynamics = detect_negative_dynamics(
+                            df,
+                            student_id_col='student_id',
+                            time_col='semester',
+                            value_col=value_col,
+                            threshold=-0.05
+                        )
+
+                        if 'error' in dynamics:
+                            st.error(dynamics['error'])
+                        else:
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("Проанализировано студентов", dynamics['n_students_analyzed'])
+                            with col2:
+                                st.metric("Студентов с отрицательной динамикой", len(dynamics['at_risk_students']))
+                                st.metric("Процент риска по динамике", f"{dynamics['risk_percentage']:.1f}%")
+
+                            if not dynamics['at_risk_students'].empty:
+                                st.write("**Студенты с отрицательной динамикой:**")
+                                st.dataframe(
+                                    dynamics['at_risk_students'][['student_id', 'trend', 'first_value', 'last_value']])
+
+                                # Выбор студента для детального анализа
+                                student_id = st.selectbox(
+                                    "Выберите студента для детального анализа",
+                                    dynamics['at_risk_students']['student_id'].tolist()
+                                )
+                                if st.button("Показать траекторию"):
+                                    trajectory = analyze_student_trajectory(
+                                        df, student_id,
+                                        time_col='semester',
+                                        value_col=value_col
+                                    )
+                                    if trajectory['figure']:
+                                        st.plotly_chart(trajectory['figure'])
+                                    st.write(f"**Тренд:** {trajectory['trend']:.3f}")
+                                    st.write(f"**Статус:** {trajectory['status']}")
+                            else:
+                                st.success("✅ Студентов с отрицательной динамикой не обнаружено")
+
+    with tab4:
+        st.write("### Обработка пропусков")
+
+        from ml_core.imputation import handle_missing_values, detect_outliers
+
+        # Показываем текущие пропуски
+        missing_before = df.isna().sum().sum()
+        st.write(f"**Пропусков до обработки:** {missing_before}")
+        st.dataframe(df.isna().sum().to_frame('Пропуски'))
+
+        # Выбросы
+        outliers = detect_outliers(df)
+        st.write("### Выбросы в данных")
+        for col, report in outliers.items():
+            if report['n_outliers'] > 0:
+                st.write(f"**{col}:** {report['n_outliers']} выбросов ({report['percentage']:.1f}%)")
+
+        strategy = st.selectbox("Стратегия обработки", ["auto", "fill_median", "fill_mean", "interpolate", "drop_rows"])
+
+        if st.button("Применить обработку"):
+            df_clean, report = handle_missing_values(df, strategy=strategy)
+            st.write("### Отчет об обработке")
+            st.write(f"**Было:** {report['original_shape']}")
+            st.write(f"**Стало:** {report['final_shape']}")
+            st.write(f"**Удалено пропусков:** {report['missing_before'] - report['missing_after']}")
+
+            for action in report['actions']:
+                st.write(f"- {action['column']}: {action['message']}")
+
+            # Обновляем df в session_state
+            st.session_state.df = df_clean
+            st.success("Данные обновлены! Перезапустите анализ для применения изменений.")
+
+    # SHAP объяснения
+    st.subheader("💡 Объяснения предсказаний")
+    if st.session_state.explanations:
+        for exp in st.session_state.explanations[:3]:
+            with st.expander(f"Студент #{exp['student_index']} - Риск: {exp['risk_probability']:.1%}"):
+                st.markdown(exp['explanation'])
+    else:
+        st.info("SHAP объяснения не сгенерированы")
+    # В app.py, после загрузки данных и ML-анализа
+
+    # st.markdown("---")
+    # st.subheader("🤖 AI-интерпретация (LLM)")
+    #
+    # # Инициализируем LLM
+    # llm = LLMInterface(provider='yandex', api_key=st.secrets.get("YANDEX_API_KEY"))
+    #
+    # col1, col2 = st.columns(2)
+    # with col1:
+    #     if st.button("📊 Интерпретировать кластеры"):
+    #         with st.spinner("AI анализирует кластеры..."):
+    #             interpretation = llm.interpret_clusters(cluster_profiles, n_clusters)
+    #             st.markdown(interpretation)
+    #
+    # with col2:
+    #     if st.button("📝 Сгенерировать отчет"):
+    #         with st.spinner("Генерация отчета..."):
+    #             report = llm.generate_report(
+    #                 metrics=test_metrics,
+    #                 correlations=top_correlations,
+    #                 feature_importance=feature_importance_dict,
+    #                 clusters_desc=cluster_profiles.to_string()
+    #             )
+    #             st.markdown(report)
+    #
+    # # Вопрос-ответ
+    # st.markdown("---")
+    # st.subheader("💬 Задать вопрос о данных")
+    #
+    # question = st.text_input("Ваш вопрос:")
+    # if st.button("Задать вопрос") and question:
+    #     with st.spinner("AI думает..."):
+    #         # Создаем краткую сводку о данных
+    #         summary = f"""
+    #         - Студентов: {len(df)}
+    #         - Признаков: {len(df.columns)}
+    #         - Целевая переменная: {target_name}
+    #         - Средняя успеваемость: {df[target_col].mean() if target_col in df.columns else 'N/A'}
+    #         """
+    #         answer = llm.answer_question(question, summary)
+    #         st.markdown(f"**Ответ:**\n\n{answer}")
+    # В блоке отображения результатов
+
+# ==================== ЭКСПОРТ (всегда внизу) ====================
+st.subheader("💾 Экспорт результатов")
+
+if st.session_state.analysis_completed:
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.session_state.X_test_sel is not None:
+            predictions_df = pd.DataFrame(
+                st.session_state.X_test_sel,
+                columns=st.session_state.selected_cols
+            )
+            predictions_df['risk_pred'] = st.session_state.y_pred
+            predictions_df['risk_probability'] = st.session_state.best_model.predict_proba(
+                st.session_state.X_test_sel
+            )[:, 1]
+            csv = predictions_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                "📥 Скачать предсказания (CSV)",
+                csv,
+                "predictions.csv",
+                "text/csv",
+                use_container_width=True,
+                key='download_pred'
+            )
+
+    with col2:
+        if st.session_state.explanations is not None:
+            explanations_df = pd.DataFrame([
+                {
+                    'student_index': e['student_index'],
+                    'risk_probability': e['risk_probability'],
+                    'risk_level': e['risk_level'],
+                    'explanation': e['explanation']
+                }
+                for e in st.session_state.explanations
+            ])
+            csv_exp = explanations_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                "📥 Скачать объяснения (CSV)",
+                csv_exp,
+                "explanations.csv",
+                "text/csv",
+                use_container_width=True,
+                key='download_exp'
+            )
+
+    st.caption("✅ Результаты последнего анализа сохранены. Можете скачивать файлы.")
 else:
-    st.info("👈 Выберите тип данных и нажмите 'Запустить анализ'")
+    # Если анализ еще не запускали
+    if not run_analysis:
+        st.info("👈 Запустите анализ, чтобы увидеть результаты и кнопки для скачивания.")
 
-    st.markdown("""
-    ### Возможности системы:
+# После экспорта, добавьте:
+st.markdown("---")
+st.subheader("📊 Мониторинг модели")
 
-    - **Загрузка данных** — CSV, Excel (опросы), синтетические данные
-    - **Разведочный анализ** — статистика, корреляции
-    - **Кластеризация** — группировка студентов по схожим признакам
-    - **ML-модели** — Random Forest для предсказания
-    - **AI-интерпретация** — LLM объясняет кластеры и генерирует отчеты
+if st.session_state.analysis_completed and st.session_state.drift_detector:
+    tab1, tab2, tab3 = st.tabs(["📈 Дрейф данных", "📉 История метрик", "⚙️ Настройки мониторинга"])
 
-    ### Для работы с Excel-опросниками:
+    with tab1:
+        st.write("### Проверка дрейфа на новых данных")
 
-    Система автоматически определяет тип листа:
-    - **Вильямс** — тест креативности
-    - **шварц** — ценности
-    - **соц1-15** — социальные опросы
-    """)
+        # Загрузка новых данных для проверки
+        new_data_file = st.file_uploader(
+            "Загрузите новые данные для проверки дрейфа",
+            type=['csv'],
+            key='drift_upload'
+        )
+        use_full_reference = st.checkbox("Использовать полный датасет как эталон", value=True)
+
+        if new_data_file is not None:
+            new_df = pd.read_csv(new_data_file)
+            current_cols = st.session_state.selected_cols
+
+            # Проверяем наличие нужных признаков
+            if all(col in new_df.columns for col in current_cols):
+                new_data = new_df[current_cols].fillna(new_df[current_cols].median())
+
+                if st.button("🔍 Проверить дрейф"):
+                    with st.spinner("Анализ дрейфа данных..."):
+
+                        if use_full_reference and st.session_state.X_train_sel is not None:
+                            full_data = pd.DataFrame(
+                                np.vstack([st.session_state.X_train_sel, st.session_state.X_test_sel]),
+                                columns=st.session_state.selected_cols
+                            )
+                            st.session_state.drift_detector.reference_data = full_data
+                        else:
+                            st.session_state.drift_detector.reference_data = st.session_state.reference_data
+
+                        drift_report = st.session_state.drift_detector.detect_drift(new_data)
+                        st.session_state.drift_report = drift_report
+
+                        # Отображаем результаты
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Дрейфующих признаков", len(drift_report['drifted_features']))
+                        with col2:
+                            st.metric("Процент дрейфа", f"{drift_report['drift_percentage']:.1f}%")
+                        with col3:
+                            status = "🔴 Есть дрейф" if drift_report['overall_drift'] else "🟢 Нет дрейфа"
+                            st.metric("Статус", status)
+
+                        # Показываем предупреждение
+                        if drift_report['overall_drift']:
+                            st.warning(st.session_state.drift_detector.generate_alert_message(drift_report))
+                        else:
+                            st.success("✅ Данные стабильны, модель можно использовать")
+
+                        # Детальный отчет
+                        with st.expander("Детальный отчет о дрейфе"):
+                            st.json(drift_report)
+
+                        # Сохраняем отчет
+                        report_path = st.session_state.drift_detector.save_report(drift_report)
+                        st.info(f"Отчет сохранен: {report_path}")
+            else:
+                missing = set(current_cols) - set(new_df.columns)
+                st.error(f"В загруженных данных отсутствуют признаки: {missing}")
+
+    with tab2:
+        st.write("### История метрик модели")
+
+        # Показываем историю метрик из логов
+        if os.path.exists('logs/model_metrics.csv'):
+            history_df = pd.read_csv('logs/model_metrics.csv')
+            st.dataframe(history_df)
+
+            # График изменения F1-score
+            if len(history_df) > 1:
+                fig_history = px.line(
+                    history_df,
+                    x='timestamp',
+                    y='f1_score',
+                    title='Динамика качества модели'
+                )
+                st.plotly_chart(fig_history)
+        else:
+            st.info("История метрик пока пуста")
+
+    with tab3:
+        st.write("### Настройки мониторинга")
+
+        new_threshold = st.slider(
+            "Порог чувствительности дрейфа (p-value)",
+            min_value=0.01,
+            max_value=0.1,
+            value=0.05,
+            step=0.01,
+            help="Чем меньше значение, тем чувствительнее детектор"
+        )
+
+        if st.button("Обновить порог"):
+            st.session_state.drift_detector.threshold = new_threshold
+            st.success(f"Порог обновлен на {new_threshold}")
+
+        # Кнопка для переобучения
+        if st.button("🔄 Запланировать переобучение"):
+            st.info("Функция переобучения будет доступна в следующей версии")
