@@ -5,6 +5,81 @@
 import pandas as pd
 import numpy as np
 
+SHEET_TYPE_PATTERNS = {
+    'williams': {
+        'keywords': ['Любознательность', 'Воображение', 'Сложность', 'Склонность к рискy', 'Сумма'],
+        'min_matches': 3
+    },
+    'schwartz': {
+        'keywords': ['Безопасность', 'Конформность', 'Традиция', 'Самостоятельность', 'Риск–новизна',
+                     'Гедонизм', 'Достижение', 'Власть–богатство', 'Благожелательность', 'Универсализм'],
+        'min_matches': 5
+    },
+    'demographics': {
+        'keywords': ['Пол', 'Возраст', 'Курс', 'ВУЗ', 'Направление подготовки', 'user', 'user_id'],
+        'min_matches': 3
+    },
+    'personality': {
+        'keywords': ['Мне нравится работать в команде', 'У меня хорошие организаторские способности',
+                     'Я – дисциплинированный человек', 'Оптимизм меня никогда не покидает'],
+        'min_matches': 2
+    },
+    'interests': {
+        'keywords': ['Мне нравится что-то делать собственными руками', 'Мне нравится учиться чему-то новому',
+                     'Я умею программировать'],
+        'min_matches': 2
+    },
+    'digital': {
+        'keywords': ['Я размещаю информацию о себе в социальных сетях', 'Я веду собственный тематический блог',
+                     'Я зарабатываю деньги в Интернете'],
+        'min_matches': 2
+    },
+    'activities': {
+        'keywords': ['Научно-исследовательские проекты', 'Спортивные соревнования', 'Волонтерская деятельность',
+                     'Творческие мероприятия'],
+        'min_matches': 2
+    },
+    'attitudes': {
+        'keywords': ['Любую идею можно довести до конкретного результата', 'Администрация вуза должна материально'],
+        'min_matches': 2
+    },
+    'grades': {
+        'keywords': ['КАК ВЫ УЧИТЕСЬ', 'УСПЕХ', 'сессия'],
+        'min_matches': 1
+    },
+    'career': {
+        'keywords': ['СОБИРАЕТЕСЬ ЛИ ВЫ РАБОТАТЬ', 'В КАКОЙ СФЕРЕ ВЫ ХОТЕЛИ БЫ РАБОТАТЬ'],
+        'min_matches': 1
+    }
+}
+
+
+def detect_sheet_type_by_columns(columns, sheet_name=None):
+    """
+    Определяет тип листа по названиям колонок.
+    Возвращает строку-тип.
+    """
+    # Игнорируем безымянные столбцы
+    cols = [str(col).strip().lower() for col in columns if not str(col).startswith('Unnamed')]
+
+    best_type = 'unknown'
+    best_score = 0
+
+    for sheet_type, pattern in SHEET_TYPE_PATTERNS.items():
+        keywords = pattern['keywords']
+        min_matches = pattern.get('min_matches', 1)
+        matched = sum(1 for kw in keywords if any(kw.lower() in col for col in cols))
+
+        if matched >= min_matches and matched > best_score:
+            best_score = matched
+            best_type = sheet_type
+
+    # Fallback: если не нашли, пробуем по имени листа
+    if best_type == 'unknown' and sheet_name:
+        best_type = detect_sheet_type(sheet_name)
+
+    return best_type
+
 
 def detect_sheet_type(sheet_name: str) -> str:
     """
@@ -118,6 +193,23 @@ def load_sheet(file_path: str, sheet_name: str) -> tuple:
     return df_processed, sheet_type, msg
 
 
+def load_excel_sheet(file_path: str, sheet_name: str) -> tuple:
+    """
+    Загружает и обрабатывает один лист Excel.
+    Возвращает (DataFrame, сообщение)
+    """
+    df = pd.read_excel(file_path, sheet_name=sheet_name)
+    sheet_type = detect_sheet_type_by_columns(df.columns, sheet_name)
+    df_processed, msg = preprocess_sheet(df, sheet_type)
+    return df_processed, msg
+
+
+def get_sheet_names(file_path: str) -> list:
+    """Возвращает список имён листов в Excel файле."""
+    xl = pd.ExcelFile(file_path)
+    return xl.sheet_names
+
+
 def preprocess_excel_data(file_path: str) -> tuple:
     """
     Загружает и обрабатывает весь Excel файл с опросами.
@@ -142,9 +234,14 @@ def preprocess_excel_data(file_path: str) -> tuple:
         message_parts = []
 
         for sheet_name in sheet_names:
-            # Загружаем лист
+            # Сначала читаем только заголовки для определения типа
+            df_headers = pd.read_excel(file_path, sheet_name=sheet_name, nrows=0)
+            sheet_type = detect_sheet_type_by_columns(df_headers.columns, sheet_name)
+
+            # Теперь читаем весь лист
             df_sheet = pd.read_excel(file_path, sheet_name=sheet_name)
-            sheet_type = detect_sheet_type(sheet_name)
+            df_processed, msg = preprocess_sheet(df_sheet, sheet_type)
+            message_parts.append(f"{sheet_name}: {msg}")
 
             # Обрабатываем
             df_processed, msg = preprocess_sheet(df_sheet, sheet_type)

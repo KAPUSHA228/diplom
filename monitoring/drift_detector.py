@@ -358,3 +358,14 @@ class DriftMonitorScheduler:
                 if detector.last_report.get('drift_percentage', 0) > drift_threshold:
                     needing.append(name)
         return needing
+
+def generate_recommendations(self, drift_report):
+    recs = []
+    if drift_report['overall_drift']:
+        recs.append("Рекомендуется переобучить модель на новых данных")
+        if len(drift_report['drifted_features']) > 3:
+            recs.append("Рассмотреть добавление/удаление признаков")
+        recs.append("Проверить качество новых данных (пропуски, выбросы)")
+    else:
+        recs.append("Данные стабильны — модель можно использовать")
+    return recs

@@ -6,21 +6,18 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from typing import Dict, List, Optional
+from sklearn.linear_model import LinearRegression
 
 
-def analyze_student_trajectory(df, student_id, time_col='semester', value_col='avg_grade'):
+def analyze_student_trajectory(df, student_id, time_col='semester',
+                               value_col='avg_grade', min_semesters=2):
     """
     Анализ траектории одного студента во времени.
     """
     student_df = df[df['student_id'] == student_id].sort_values(time_col)
 
-    if len(student_df) < 2:
-        return {
-            'student_id': student_id,
-            'n_points': len(student_df),
-            'trend': 0,
-            'status': 'insufficient_data'
-        }
+    if len(student_df) < min_semesters:
+        return {'error': f'Недостаточно данных (нужно минимум {min_semesters} семестров)'}
 
     values = student_df[value_col].values
     times = student_df[time_col].values
@@ -242,3 +239,16 @@ def create_temporal_features(df, time_col='semester', student_id_col='student_id
             result_df[f'{col}_pct_change'] = result_df.groupby(student_id_col)[col].pct_change()
 
     return result_df
+
+
+def forecast_grades(df, student_id, time_col='semester', value_col='avg_grade', future_semesters=2):
+    student_data = df[df['student_id'] == student_id].sort_values(time_col)
+    X = student_data[time_col].values.reshape(-1, 1)
+    y = student_data[value_col].values
+
+    model = LinearRegression().fit(X, y)
+    future_x = np.array([X.max() + i + 1 for i in range(future_semesters)]).reshape(-1, 1)
+    pred = model.predict(future_x)
+
+    return {'future_semesters': list(range(int(X.max()) + 1, int(X.max()) + future_semesters + 1)),
+            'predictions': pred.tolist()}

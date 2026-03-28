@@ -203,3 +203,21 @@ def simple_crosstab(df, row_var, col_var):
         'table': table,
         'chi2_test': chi2_result
     }
+
+
+def export_crosstab(result, filename="crosstab", format="excel"):
+    table = result['table']
+    if format == "csv":
+        table.to_csv(f"{filename}.csv", encoding="utf-8")
+    elif format == "excel":
+        table.to_excel(f"{filename}.xlsx", engine='openpyxl')
+    return f"{filename}.{format}"
+
+
+def save_plotly_fig(fig, filename="plot", format="png"):
+    """Сохранение Plotly фигуры"""
+    if format == "png":
+        fig.write_image(f"{filename}.png", scale=2)
+    elif format == "svg":
+        fig.write_image(f"{filename}.svg")
+    return f"{filename}.{format}"

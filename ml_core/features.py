@@ -8,10 +8,26 @@ from sklearn.linear_model import LogisticRegression
 from imblearn.over_sampling import SMOTE
 from sklearn.feature_selection import mutual_info_classif, RFE
 
-try:
-    import seaborn as sns
-except ImportError:
-    sns = None
+
+def build_composite_score(df, feature_weights: dict, score_name="custom_score", normalize=True):
+    """
+    Конструктор композитной оценки.
+
+    feature_weights = {'avg_grade': 0.4, 'stress_level': -0.3, 'activity_score': 0.3, ...}
+    Отрицательный вес = обратное влияние.
+    """
+    df = df.copy()
+    score = pd.Series(0.0, index=df.index)
+
+    for feature, weight in feature_weights.items():
+        if feature in df.columns:
+            col = df[feature].fillna(df[feature].median())
+            if normalize and df[feature].dtype in ['int64', 'float64']:
+                col = (col - col.min()) / (col.max() - col.min() + 1e-8)
+            score += col * weight
+
+    df[score_name] = score
+    return df, score_name
 
 
 # ---- Композитные признаки согласно ТЗ ----

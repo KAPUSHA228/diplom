@@ -15,6 +15,7 @@ try:
 except ImportError:
     sns = None
 
+
 # ---- Корреляционный анализ ----
 def correlation_analysis(df, feature_cols, target_col, output_prefix="corr"):
     """
@@ -33,7 +34,6 @@ def correlation_analysis(df, feature_cols, target_col, output_prefix="corr"):
         plt.close()
 
     return corr
-
 
 
 def cluster_students(df, n_clusters=3, feature_cols=None):
@@ -108,3 +108,37 @@ def plot_clusters_2d(X, cluster_labels, output_path="clusters_2d.png"):
     plt.savefig(output_path, dpi=200)
     plt.close()
     return pca
+
+
+def correlation_analysis_enhanced(df, feature_cols, target_col,
+                                  corr_threshold=0.3,
+                                  output_prefix="corr"):
+    """
+    Улучшенный корреляционный анализ с фильтрацией по порогу.
+    """
+    cols = [c for c in feature_cols if c in df.columns] + [target_col]
+    corr = df[cols].corr()
+
+    # Фильтрация сильных корреляций
+    strong_corr = corr[abs(corr) >= corr_threshold].dropna(how='all').dropna(how='all', axis=1)
+
+    # Сохранение
+    corr.to_csv(f"{output_prefix}_matrix_full.csv", encoding="utf-8")
+    if not strong_corr.empty:
+        strong_corr.to_csv(f"{output_prefix}_matrix_strong_{corr_threshold}.csv", encoding="utf-8")
+
+    return {
+        'full_matrix': corr,
+        'strong_matrix': strong_corr,
+        'threshold': corr_threshold,
+        'target_correlations': corr[target_col].sort_values(key=abs, ascending=False)
+    }
+
+
+def save_plotly_fig(fig, filename="plot", format="png"):
+    """Сохранение Plotly фигуры"""
+    if format == "png":
+        fig.write_image(f"{filename}.png", scale=2)
+    elif format == "svg":
+        fig.write_image(f"{filename}.svg")
+    return f"{filename}.{format}"
