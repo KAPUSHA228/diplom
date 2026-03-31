@@ -9,11 +9,10 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
+import seaborn as sns
+import  pandas as pd
 
-try:
-    import seaborn as sns
-except ImportError:
-    sns = None
+from ml_core.error_handler import logger
 
 
 # ---- Корреляционный анализ ----
@@ -22,6 +21,7 @@ def correlation_analysis(df, feature_cols, target_col, output_prefix="corr"):
     Строит корреляционную матрицу для выбранных признаков и целевой переменной.
     Матрица сохраняется в CSV, при наличии seaborn дополнительно сохраняется heatmap в PNG.
     """
+    df = df.copy()
     cols = feature_cols + [target_col]
     corr = df[cols].corr()
     corr.to_csv(f"{output_prefix}_matrix.csv", encoding="utf-8", index=True)
@@ -40,6 +40,8 @@ def cluster_students(df, n_clusters=3, feature_cols=None):
     """
     Кластеризация студентов
     """
+    df = df.copy()
+
     if feature_cols is None:
         feature_cols = df.select_dtypes(include=[np.number]).columns.tolist()
 
@@ -60,6 +62,8 @@ def analyze_cluster_profiles(df, features, cluster_col='cluster'):
     """
     Анализ профилей кластеров
     """
+    df = df.copy()
+
     profiles = df.groupby(cluster_col)[features].mean()
     profiles['size'] = df.groupby(cluster_col).size()
     profiles['size_pct'] = profiles['size'] / len(df) * 100
@@ -71,6 +75,8 @@ def plot_clusters_pca(df, labels, features):
     """
     Визуализация кластеров с помощью PCA
     """
+    df = df.copy()
+
     X = df[features].fillna(df[features].median())
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
@@ -114,24 +120,46 @@ def correlation_analysis_enhanced(df, feature_cols, target_col,
                                   corr_threshold=0.3,
                                   output_prefix="corr"):
     """
-    Улучшенный корреляционный анализ с фильтрацией по порогу.
+    Улучшенный корреляционный анализ.
+    ИСПРАВЛЕНА критическая ошибка sort_values (принудительно Series).
     """
+    df = df.copy()
+
+    # Оставляем только нужные числовые колонки
     cols = [c for c in feature_cols if c in df.columns] + [target_col]
-    corr = df[cols].corr()
+    numeric_df = df[cols].select_dtypes(include=[np.number])
+
+    if numeric_df.empty or target_col not in numeric_df.columns:
+        logger.warning(f"Не найдены числовые колонки для корреляции с {target_col}")
+        return None
+
+    corr = numeric_df.corr()
+
+    # === САМОЕ НАДЁЖНОЕ ИСПРАВЛЕНИЕ ===
+    # Принудительно превращаем в Series
+    target_series = corr[target_col]
+
+    # Если по какой-то причине это DataFrame — берём первый столбец
+    if isinstance(target_series, pd.DataFrame):
+        target_series = target_series.iloc[:, 0]
+
+    # Теперь безопасно сортируем
+    target_corrs = target_series.abs().sort_values(ascending=False)
 
     # Фильтрация сильных корреляций
     strong_corr = corr[abs(corr) >= corr_threshold].dropna(how='all').dropna(how='all', axis=1)
 
-    # Сохранение
-    corr.to_csv(f"{output_prefix}_matrix_full.csv", encoding="utf-8")
+    # Сохранение (опционально)
+    corr.to_csv(f"{output_prefix}_matrix_full.csv", encoding="utf-8", index=True)
     if not strong_corr.empty:
-        strong_corr.to_csv(f"{output_prefix}_matrix_strong_{corr_threshold}.csv", encoding="utf-8")
+        strong_corr.to_csv(f"{output_prefix}_matrix_strong_{corr_threshold}.csv", encoding="utf-8", index=True)
 
     return {
         'full_matrix': corr,
         'strong_matrix': strong_corr,
         'threshold': corr_threshold,
-        'target_correlations': corr[target_col].sort_values(key=abs, ascending=False)
+        'target_correlations': target_corrs,                    # Series с отсортированными |corr|
+        'strong_correlations': target_corrs[target_corrs > corr_threshold] if corr_threshold > 0 else target_corrs
     }
 
 

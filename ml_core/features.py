@@ -8,6 +8,8 @@ from sklearn.linear_model import LogisticRegression
 from imblearn.over_sampling import SMOTE
 from sklearn.feature_selection import mutual_info_classif, RFE
 
+from ml_core.error_handler import logger
+
 
 def build_composite_score(df, feature_weights: dict, score_name="custom_score", normalize=True):
     """
@@ -31,25 +33,25 @@ def build_composite_score(df, feature_weights: dict, score_name="custom_score", 
 
 
 # ---- Композитные признаки согласно ТЗ ----
-def add_composite_features(df):
-    """
-    Создает композитные признаки на основе данных из ТЗ.
-    Соответствует пункту ТЗ 6.2 - группировка и агрегирование показателей.
-    """
-    # 1. Тренд успеваемости (если еще не создан)
-    if 'trend_grades' not in df.columns:
-        if 'max_grade' in df.columns and 'min_grade' in df.columns:
-            df['trend_grades'] = df['max_grade'] - df['min_grade']
-        else:
-            df['trend_grades'] = 0
+# ml_core/features.py
 
-    # 2. Стабильность успеваемости (коэффициент вариации)
-    if 'grade_std' in df.columns and 'avg_grade' in df.columns:
+def add_composite_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Создает композитные признаки ТОЛЬКО если есть необходимые исходные данные.
+    Если данных нет — колонка не создаётся или заполняется NaN.
+    """
+    df = df.copy()
+
+    # 1. Тренд успеваемости
+    if {'max_grade', 'min_grade'}.issubset(df.columns):
+        df['trend_grades'] = df['max_grade'] - df['min_grade']
+    # else: колонка не создаётся — это лучше, чем заполнять 0
+
+    # 2. Стабильность успеваемости
+    if {'grade_std', 'avg_grade'}.issubset(df.columns):
         df['grade_stability'] = df['grade_std'] / (df['avg_grade'] + 0.01)
-    else:
-        df['grade_stability'] = 0
 
-    # 3. Когнитивная нагрузка (комбинация из ТЗ)
+    # 3. Когнитивная нагрузка
     cognitive_components = []
     if 'workload_perception' in df.columns:
         cognitive_components.append(df['workload_perception'] * 2)
@@ -60,10 +62,9 @@ def add_composite_features(df):
 
     if cognitive_components:
         df['cognitive_load'] = sum(cognitive_components) / len(cognitive_components)
-    else:
-        df['cognitive_load'] = 0
+    # else: не создаём колонку
 
-    # 4. Индекс удовлетворенности (из анкетирования)
+    # 4. Индекс удовлетворенности
     satisfaction_components = []
     if 'satisfaction_score' in df.columns:
         satisfaction_components.append(df['satisfaction_score'])
@@ -72,10 +73,8 @@ def add_composite_features(df):
 
     if satisfaction_components:
         df['overall_satisfaction'] = sum(satisfaction_components) / len(satisfaction_components)
-    else:
-        df['overall_satisfaction'] = 3.0
 
-    # 5. Психологическое благополучие (из психологического тестирования)
+    # 5. Психологическое благополучие
     psych_components = []
     if 'motivation_score' in df.columns:
         psych_components.append(df['motivation_score'])
@@ -86,8 +85,6 @@ def add_composite_features(df):
 
     if psych_components:
         df['psychological_wellbeing'] = sum(psych_components) / len(psych_components)
-    else:
-        df['psychological_wellbeing'] = 5.0
 
     # 6. Академическая активность
     activity_components = []
@@ -100,39 +97,32 @@ def add_composite_features(df):
 
     if activity_components:
         df['academic_activity'] = sum(activity_components) / len(activity_components)
-    else:
-        df['academic_activity'] = 5.0
 
     return df
 
 
-def get_base_features(df: pd.DataFrame) -> list:
+def get_base_features(df: pd.DataFrame, is_synthetic: bool = False) -> list:
     """
     Определение базовых признаков из ТЗ
     """
-    base_features = []
-
-    # Признаки из успеваемости
-    for col in ['avg_grade', 'grade_std', 'min_grade', 'max_grade', 'n_courses', 'avg_brs']:
-        if col in df.columns:
-            base_features.append(col)
-
-    # Признаки из анкетирования
-    for col in ['satisfaction_score', 'engagement_score', 'workload_perception']:
-        if col in df.columns:
-            base_features.append(col)
-
-    # Признаки из психологического тестирования
-    for col in ['stress_level', 'motivation_score', 'anxiety_score']:
-        if col in df.columns:
-            base_features.append(col)
-
-    # Признаки из эссе
-    for col in ['n_essays', 'avg_essay_grade']:
-        if col in df.columns:
-            base_features.append(col)
-
-    return base_features
+    df = df.copy()
+    exclude = {
+        'user', 'user_id', 'VK_id', 'vk ID', 'Фамилия', 'Имя', 'ВУЗ',
+        'дата', 'date', '_source_sheet', '_sheet_type', 'cluster', 'risk_flag'
+    }
+    if is_synthetic:
+        # Для синтетики — жёсткий список
+        synthetic_cols = [
+            'avg_grade', 'grade_std', 'min_grade', 'max_grade', 'n_courses', 'avg_brs',
+            'satisfaction_score', 'engagement_score', 'workload_perception',
+            'stress_level', 'motivation_score', 'anxiety_score',
+            'n_essays', 'avg_essay_grade'
+        ]
+        return [col for col in synthetic_cols if col in df.columns]
+    else:
+        # Для реальных данных — все числовые колонки
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        return [col for col in numeric_cols if col not in exclude]
 
 
 def select_features_for_model(x, y, top_n=7, final_n=5):
@@ -160,13 +150,22 @@ def select_features_for_model(x, y, top_n=7, final_n=5):
 
 
 # ---- Предобработка и борьба с дисбалансом ----
-def preprocess_data(df, feature_cols, target_col):
-    x = df[feature_cols]
+def preprocess_data(df: pd.DataFrame, feature_cols: list, target_col: str, use_smote: bool = True):
+    df = df.copy()
+
+    x = df[feature_cols].fillna(df[feature_cols].median(numeric_only=True))
     y = df[target_col]
-    # Fill NA if present
-    x = x.fillna(x.median(numeric_only=True))
-    # SMOTE
-    smote = SMOTE(random_state=42)
+
+    if not use_smote:
+        return x, y
+
+    min_class_size = y.value_counts().min()
+    if min_class_size <= 5:
+        logger.warning(f"SMOTE отключён: в меньшем классе всего {min_class_size} объектов")
+        return x, y
+
+    from imblearn.over_sampling import SMOTE
+    smote = SMOTE(random_state=42, k_neighbors=min(5, min_class_size - 1))
     x_res, y_res = smote.fit_resample(x, y)
     return x_res, y_res
 
@@ -179,3 +178,15 @@ def select_features(X, y, top_n=10, final_n=5):
     X_sel = rfe.fit_transform(X[top_features], y)
     selected_cols = np.array(top_features)[rfe.support_]
     return pd.DataFrame(X_sel, columns=selected_cols), selected_cols
+
+
+def preprocess_data_for_smote(X_train: pd.DataFrame, y_train: pd.Series):
+    """SMOTE применяется ТОЛЬКО к обучающей выборке"""
+    min_class_size = y_train.value_counts().min()
+    if min_class_size <= 5:
+        logger.warning(f"SMOTE отключён: в меньшем классе {min_class_size} объектов")
+        return X_train, y_train
+
+    smote = SMOTE(random_state=42, k_neighbors=min(5, min_class_size - 1))
+    X_res, y_res = smote.fit_resample(X_train, y_train)
+    return X_res, y_res

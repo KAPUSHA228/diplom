@@ -5,9 +5,10 @@
 
 import plotly.graph_objects as go
 import plotly.express as px
-
+import pandas as pd
 import numpy as np
-
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
 from sklearn.metrics import (
     roc_auc_score,
     f1_score,
@@ -19,10 +20,9 @@ from sklearn.metrics import (
 import shap
 import matplotlib.pyplot as plt
 
-try:
-    import seaborn as sns
-except ImportError:
-    sns = None
+import seaborn as sns
+
+from ml_core.error_handler import logger
 
 
 def calculate_metrics(y_true, y_pred, y_proba=None):
@@ -118,118 +118,54 @@ def plot_feature_importance(model, feature_names, top_n=10):
     return fig
 
 
-def generate_shap_explanations(model, X, feature_names, threshold=0.5, top_n=5):
-    """
-    Генерация SHAP-объяснений для предсказаний
-    """
-    # Создаем explainer
-    if 'XGB' in str(type(model)):
-        explainer = shap.TreeExplainer(model)
-    elif 'RandomForest' in str(type(model)):
-        explainer = shap.TreeExplainer(model)
-    else:
-        explainer = shap.LinearExplainer(model, X)
+def generate_shap_explanations(model, X: pd.DataFrame, feature_names: list, threshold: float = 0.5, top_n: int = 5):
+    """Единый обработчик SHAP с корректной поддержкой всех типов моделей"""
+    try:
+        # Единый способ создания explainer
+        if isinstance(model, (XGBClassifier, RandomForestClassifier)):
+            explainer = shap.TreeExplainer(model)
+        else:
+            explainer = shap.LinearExplainer(model, X) if hasattr(model, 'coef_') else shap.Explainer(model)
 
-    # Вычисляем SHAP values
-    shap_values = explainer.shap_values(X)
+        shap_values = explainer.shap_values(X)
 
-    # Логируем для отладки (можно закомментировать после отладки)
-    print(f"Type of shap_values: {type(shap_values)}")
-    if isinstance(shap_values, list):
-        print(f"Length of shap_values list: {len(shap_values)}")
-        print(f"Shape of first element: {shap_values[0].shape if hasattr(shap_values[0], 'shape') else 'unknown'}")
-    elif hasattr(shap_values, 'shape'):
-        print(f"Shape of shap_values: {shap_values.shape}")
+        # Приведение к единому формату (для класса 1)
+        if isinstance(shap_values, list) and len(shap_values) == 2:   # TreeExplainer для бинарной классификации
+            shap_values = shap_values[1]
+        elif hasattr(shap_values, 'shape') and len(shap_values.shape) == 3:
+            shap_values = shap_values[:, :, 1] if shap_values.shape[2] > 1 else shap_values[:, :, 0]
 
-    # Формируем объяснения
-    explanations = []
-
-    # Если бинарная классификация и shap_values - список (формат TreeExplainer для 2 классов)
-    if isinstance(shap_values, list) and len(shap_values) == 2:
-        # Берем для класса 1 (риск)
-        shap_values_class1 = shap_values[1]
-        if len(shap_values_class1.shape) > 1 and shap_values_class1.shape[0] == len(X):
-            for i in range(min(len(X), 10)):
-                risk_prob = model.predict_proba(X.iloc[i:i + 1])[0][1]
-
-                # Получаем топ-5 признаков
-                feature_effects = list(zip(feature_names, shap_values_class1[i]))
-                feature_effects.sort(key=lambda x: abs(x[1]), reverse=True)
-
-                explanation = {
-                    'student_index': i,
-                    'risk_probability': float(risk_prob),
-                    'risk_level': 'high' if risk_prob > threshold else 'low',
-                    'top_features': [
-                        {
-                            'feature': feat,
-                            'shap_value': float(val),
-                            'effect': 'увеличивает риск' if val > 0 else 'снижает риск'
-                        }
-                        for feat, val in feature_effects[:top_n]
-                    ]
-                }
-
-                explanation['explanation'] = generate_text_explanation(explanation)
-                explanations.append(explanation)
-
-    # Если shap_values - массив (формат LinearExplainer или TreeExplainer в другой версии)
-    elif hasattr(shap_values, 'shape') and len(shap_values.shape) == 2:
-        for i in range(min(len(X), 10)):
-            risk_prob = model.predict_proba(X.iloc[i:i + 1])[0][1]
-
-            feature_effects = list(zip(feature_names, shap_values[i]))
-            feature_effects.sort(key=lambda x: abs(x[1]), reverse=True)
-
-            explanation = {
-                'student_index': i,
-                'risk_probability': float(risk_prob),
-                'risk_level': 'high' if risk_prob > threshold else 'low',
-                'top_features': [
-                    {
-                        'feature': feat,
-                        'shap_value': float(val),
-                        'effect': 'увеличивает риск' if val > 0 else 'снижает риск'
-                    }
-                    for feat, val in feature_effects[:top_n]
-                ]
-            }
-
-            explanation['explanation'] = generate_text_explanation(explanation)
-            explanations.append(explanation)
-
-    # Если shap_values - 3D массив (редкий случай)
-    elif hasattr(shap_values, 'shape') and len(shap_values.shape) == 3:
-        shap_values_2d = shap_values[:, :, 1] if shap_values.shape[2] > 1 else shap_values[:, :, 0]
-        for i in range(min(len(X), 10)):
-            risk_prob = model.predict_proba(X.iloc[i:i + 1])[0][1]
-
-            feature_effects = list(zip(feature_names, shap_values_2d[i]))
-            feature_effects.sort(key=lambda x: abs(x[1]), reverse=True)
-
-            explanation = {
-                'student_index': i,
-                'risk_probability': float(risk_prob),
-                'risk_level': 'high' if risk_prob > threshold else 'low',
-                'top_features': [
-                    {
-                        'feature': feat,
-                        'shap_value': float(val),
-                        'effect': 'увеличивает риск' if val > 0 else 'снижает риск'
-                    }
-                    for feat, val in feature_effects[:top_n]
-                ]
-            }
-
-            explanation['explanation'] = generate_text_explanation(explanation)
-            explanations.append(explanation)
-
-    else:
-        # Если формат не распознан, возвращаем пустой список с предупреждением
-        print(f"Неизвестный формат SHAP values: {type(shap_values)}")
         explanations = []
+        for i in range(min(len(X), 15)):   # ограничиваем для производительности
+            risk_prob = float(model.predict_proba(X.iloc[[i]])[0, 1])
 
-    return explanations
+            # shap_values может быть ndarray
+            shap_row = shap_values[i] if len(shap_values.shape) == 2 else shap_values[i]
+
+            feature_effects = list(zip(feature_names, shap_row))
+            feature_effects.sort(key=lambda x: abs(x[1]), reverse=True)
+
+            explanation = {
+                'student_index': i,
+                'risk_probability': risk_prob,
+                'risk_level': 'high' if risk_prob > threshold else 'low',
+                'top_features': [
+                    {
+                        'feature': feat,
+                        'shap_value': float(val),
+                        'effect': 'увеличивает риск' if val > 0 else 'снижает риск'
+                    }
+                    for feat, val in feature_effects[:top_n]
+                ]
+            }
+            explanation['explanation'] = generate_text_explanation(explanation)
+            explanations.append(explanation)
+
+        return explanations
+
+    except Exception as e:
+        logger.error(f"SHAP generation failed: {str(e)}", exc_info=True)
+        return []
 
 def generate_text_explanation(exp):
     """

@@ -31,6 +31,8 @@ def create_crosstab(df, row_var, col_var, values=None, aggfunc='count', normaliz
     --------
     dict с таблицей, статистикой и визуализацией
     """
+    df = df.copy()
+
     # Проверяем, что переменные существуют в DataFrame
     if row_var not in df.columns:
         raise ValueError(f"Переменная '{row_var}' не найдена в данных")
@@ -157,6 +159,8 @@ def create_multi_crosstab(df, variables, target_var):
     --------
     dict с результатами для каждой переменной
     """
+    df = df.copy()
+
     results = {}
 
     for var in variables:
@@ -178,6 +182,8 @@ def simple_crosstab(df, row_var, col_var):
     --------
     dict с таблицей и статистикой
     """
+    df = df.copy()
+
     if row_var not in df.columns or col_var not in df.columns:
         return {'error': 'Variable not found'}
 

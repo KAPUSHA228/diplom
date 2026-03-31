@@ -17,11 +17,6 @@ from sklearn.metrics import (
     recall_score,
 )
 
-try:
-    import seaborn as sns
-except ImportError:
-    sns = None
-
 
 class ModelTrainer:
     """Класс для обучения и сохранения моделей"""

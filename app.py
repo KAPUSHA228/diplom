@@ -1,36 +1,26 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import time
 import os
-from sklearn.model_selection import train_test_split, StratifiedKFold
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
-from xgboost import XGBClassifier
 import numpy as np
-from sklearn.preprocessing import StandardScaler
+import re
+from ml_core.analyzer import ResearchAnalyzer
 # Импортируем ВАШИ модули
 from ml_core.data import load_from_csv
-from ml_core.features import add_composite_features, get_base_features, select_features_for_model, preprocess_data
-from ml_core.analysis import (
-    correlation_analysis, cluster_students,
-    analyze_cluster_profiles, plot_clusters_pca
-)
-from ml_core.llm_interface import LLMInterface
+from ml_core.features import add_composite_features
+from ml_core.analysis import cluster_students, plot_clusters_pca
 from ml_core.models import ModelTrainer
-from ml_core.evaluation import (
-    plot_roc_curves, plot_confusion_matrix,
-    plot_feature_importance, generate_shap_explanations
-)
+from ml_core.evaluation import plot_roc_curves, plot_confusion_matrix, plot_feature_importance
 import plotly.graph_objects as go
 from monitoring.logger import MLLogger
-from monitoring.drift_detector import DataDriftDetector, DriftMonitorThread, DriftMonitorScheduler
+from monitoring.drift_detector import DataDriftDetector
 from ml_core.analysis import correlation_analysis_enhanced
 from ml_core.features import build_composite_score
 from ml_core.timeseries import forecast_grades
 from ml_core.crosstab import export_crosstab
-from ml_core.error_handler import safe_execute
+from ml_core.error_handler import safe_execute, logger
 from ml_core.analysis import save_plotly_fig
+from ml_core.loader import get_sheet_names, load_excel_sheet
 
 
 def plot_drift_visualization(drift_report, reference_data, current_data):
@@ -230,41 +220,64 @@ with st.sidebar:
             key="excel_uploader"
         )
         if excel_file is not None:
-            from ml_core.loader import get_sheet_names, load_excel_sheet
-
+            temp_path = "temp_excel.xlsx"
             # Сохраняем временно
-            with open('temp_excel.xlsx', 'wb') as f:
+            with open(temp_path, 'wb') as f:
                 f.write(excel_file.getbuffer())
 
-            sheet_names = get_sheet_names('temp_excel.xlsx')
+            merge_all = st.checkbox(
+                "Объединить все листы по user / user_id / VK_id",
+                value=False,
+                help="Включает режим полного мёрджa всех листов из файла"
+            )
+            if merge_all:
+                if st.button("📂 Объединить все листы", type="primary"):
+                    with st.spinner("Выполняется объединение всех листов..."):
+                        from ml_core.loader import preprocess_excel_data
 
-            if 'selected_sheet' not in st.session_state:
-                st.session_state.selected_sheet = sheet_names[0] if sheet_names else None
+                        df_merged, msg = preprocess_excel_data(temp_path)
 
-            if len(sheet_names) > 1:
-                selected_sheet = st.selectbox(
-                    "Выберите лист для анализа",
-                    sheet_names,
-                    index=sheet_names.index(
-                        st.session_state.selected_sheet) if st.session_state.selected_sheet in sheet_names else 0,
-                    key="sheet_selector"
-                )
-                st.session_state.selected_sheet = selected_sheet
+                        if df_merged is not None:
+                            st.session_state.raw_df = df_merged
+                            st.session_state.data_loaded = True
+                            st.session_state.target_selected = False
+                            st.session_state.analysis_completed = False
+                            st.session_state.data_category = 'excel_merged'
+                            st.success(f"✅ {msg}. Объединено {len(df_merged)} записей.")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {msg}")
             else:
-                selected_sheet = sheet_names[0]
+                from ml_core.loader import get_sheet_names, load_excel_sheet
+                sheet_names = get_sheet_names(temp_path)
 
-            if st.button("📂 Загрузить выбранный лист", key="load_sheet"):
-                df, msg = load_excel_sheet('temp_excel.xlsx', selected_sheet)
-                if df is not None:
-                    st.session_state.raw_df = df
-                    st.session_state.data_loaded = True
-                    st.session_state.target_selected = False
-                    st.session_state.analysis_completed = False
-                    st.session_state.data_category = 'excel'
-                    st.success(f"✅ {msg}")
-                    st.rerun()
+                if 'selected_sheet' not in st.session_state:
+                    st.session_state.selected_sheet = sheet_names[0] if sheet_names else None
+
+                if len(sheet_names) > 1:
+                    selected_sheet = st.selectbox(
+                        "Выберите лист для анализа",
+                        sheet_names,
+                        index=sheet_names.index(
+                            st.session_state.selected_sheet) if st.session_state.selected_sheet in sheet_names else 0,
+                        key="sheet_selector"
+                    )
+                    st.session_state.selected_sheet = selected_sheet
                 else:
-                    st.error(f"❌ {msg}")
+                    selected_sheet = sheet_names[0]
+
+                if st.button("📂 Загрузить выбранный лист", key="load_sheet"):
+                    df, msg = load_excel_sheet('temp_excel.xlsx', selected_sheet)
+                    if df is not None:
+                        st.session_state.raw_df = df
+                        st.session_state.data_loaded = True
+                        st.session_state.target_selected = False
+                        st.session_state.analysis_completed = False
+                        st.session_state.data_category = 'excel'
+                        st.success(f"✅ {msg}")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg}")
 
     st.markdown("---")
 
@@ -286,6 +299,7 @@ with st.sidebar:
             ["f1", "roc_auc", "precision", "recall"],
             index=0
         )
+        use_smote = st.checkbox("Использовать SMOTE для балансировки классов", value=True)
 
         corr_threshold = st.slider("Порог корреляции для сильных связей", 0.0, 1.0, 0.3, 0.05)
         # Количество признаков для отбора
@@ -382,326 +396,113 @@ if st.session_state.data_loaded and st.session_state.target_selected:
         ml_logger.log_event("analysis_started", {
             "data_type": data_type,
             "n_clusters": n_clusters,
-            "use_hp_tuning": use_hp_tuning
+            "use_hp_tuning": use_hp_tuning,
+            "use_smote": use_smote
         })
 
-        with st.spinner("Загрузка и обработка данных..."):
-            df = st.session_state.raw_df.copy()
-            target_col = st.session_state.target_column
-            category = st.session_state.data_category
+        with st.spinner("Выполняется полный анализ через ResearchAnalyzer..."):
+            try:
+                # Определяем флаги
+                is_synthetic = (data_type == "Синтетические данные")
 
-            # Определяем базовые признаки
-            base_features = get_base_features(df)
-            df = add_composite_features(df)
+                # Создаём анализатор
+                analyzer = ResearchAnalyzer()
 
-            # Добавляем композитные признаки
-            composite_features = ['trend_grades', 'grade_stability', 'cognitive_load',
-                                  'overall_satisfaction', 'psychological_wellbeing', 'academic_activity']
-            all_features = base_features + [f for f in composite_features if f in df.columns]
+                # Запускаем полный анализ через главный фасад
+                analysis_result = analyzer.run_full_analysis(
+                    df=st.session_state.raw_df.copy(),
+                    target_col=st.session_state.target_column,
+                    n_clusters=n_clusters,
+                    risk_threshold=risk_threshold,
+                    corr_threshold=corr_threshold,
+                    is_synthetic=is_synthetic,
+                    use_smote=use_smote
+                )
 
-            # Логируем признаки
-            ml_logger.log_features(all_features)
+                if analysis_result.status == "error":
+                    st.error(f"❌ Ошибка при выполнении анализа: {analysis_result.message}")
+                    st.stop()
 
-            # Создаём целевую переменную, если её нет
-            if target_col not in df.columns:
-                st.warning(f"Целевая переменная '{target_col}' не найдена, создаем на основе данных")
+                # Извлекаем основные результаты
+                metrics = analysis_result.metrics
+                test_metrics = analysis_result.test_metrics or metrics.get('test', {})
+                all_features = analysis_result.selected_features
+                explanations = analysis_result.explanations or []
 
-                if category == 'grades':
-                    if 'avg_grade' in df.columns:
-                        df[target_col] = (df['avg_grade'] < 3.0).astype(int)
-                    elif 'Сумма' in df.columns:
-                        df[target_col] = (df['Сумма'] < 80).astype(int)
-                    else:
-                        df[target_col] = np.random.binomial(1, 0.3, size=len(df))
-
-                elif category == 'psychology':
-                    if 'stress_level' in df.columns and 'motivation_score' in df.columns:
-                        burnout = (df['stress_level'] > 7).astype(int) * 0.5 + (df['motivation_score'] < 4).astype(
-                            int) * 0.5
-                        df[target_col] = (burnout > 0.5).astype(int)
-                    else:
-                        df[target_col] = np.random.binomial(1, 0.3, size=len(df))
-
-                elif category == 'creativity':
-                    if 'creativity_total' in df.columns:
-                        df[target_col] = (df['creativity_total'] > 100).astype(int)
-                    elif 'Сумма' in df.columns:
-                        df[target_col] = (df['Сумма'] > 100).astype(int)
-                    else:
-                        df[target_col] = np.random.binomial(1, 0.3, size=len(df))
-
-                elif category == 'values':
-                    # Для ценностей создаём профиль (открытый vs консервативный)
-                    if all(c in df.columns for c in ['self_direction', 'stimulation', 'security', 'conformity']):
-                        open_score = df['self_direction'] + df['stimulation']
-                        conservative_score = df['security'] + df['conformity']
-                        df[target_col] = (open_score > conservative_score).astype(int)
-                    else:
-                        df[target_col] = np.random.binomial(1, 0.5, size=len(df))
-
-                elif category == 'personality':
-                    if 'leadership' in df.columns:
-                        df[target_col] = (df['leadership'] > 3).astype(int)
-                    else:
-                        df[target_col] = np.random.binomial(1, 0.4, size=len(df))
-
-                elif category == 'activities':
-                    if 'activity_score' in df.columns:
-                        df[target_col] = (df['activity_score'] >= 3).astype(int)
-                    else:
-                        df[target_col] = np.random.binomial(1, 0.3, size=len(df))
-
-                elif category == 'career':
-                    if 'work_by_specialty' in df.columns:
-                        df[target_col] = (df['work_by_specialty'] == 'Да').astype(int)
-                    else:
-                        df[target_col] = np.random.binomial(1, 0.5, size=len(df))
-
+                # Сохраняем cv_results для отображения
+                if hasattr(analysis_result, 'cv_results'):
+                    st.session_state.cv_results = analysis_result.cv_results
                 else:
-                    # Для пользовательских данных пробуем преобразовать в бинарную
-                    if df[target_col].dtype in ['int64', 'float64'] and df[target_col].nunique() > 2:
-                        median_val = df[target_col].median()
-                        df[target_col] = (df[target_col] > median_val).astype(int)
-                        st.info(f"Колонка '{target_col}' преобразована в бинарную (порог = медиана {median_val:.2f})")
-                    else:
-                        df[target_col] = np.random.binomial(1, 0.3, size=len(df))
-            else:
-                st.info(f"✅ Целевая переменная '{target_col}' уже присутствует в данных")
+                    st.session_state.cv_results = metrics.get('cv_results', {})
 
-                # Проверяем, что колонка только одна
-                if list(df.columns).count(target_col) > 1:
-                    # Оставляем только первую колонку
-                    cols_to_keep = []
-                    first_found = False
-                    for col in df.columns:
-                        if col == target_col:
-                            if not first_found:
-                                cols_to_keep.append(col)
-                                first_found = True
-                        else:
-                            cols_to_keep.append(col)
-                    df = df[cols_to_keep]
-                    st.warning(f"⚠️ Удалены дублирующиеся колонки '{target_col}'")
+                # Для отображения
+                df = st.session_state.raw_df.copy()
+                df = safe_execute(add_composite_features, df)
 
-                # Преобразуем в бинарную если нужно
-                if df[target_col].dtype in ['int64', 'float64'] and df[target_col].nunique() > 2:
-                    median_val = df[target_col].median()
-                    df[target_col] = (df[target_col] > median_val).astype(int)
-                    st.info(f"Колонка '{target_col}' преобразована в бинарную (порог = медиана {median_val:.2f})")
-
-            # Удаляем дубликаты колонок
-            duplicate_cols = [col for col in df.columns if list(df.columns).count(col) > 1]
-            if duplicate_cols:
-                st.warning(f"⚠️ Найдены дублирующиеся колонки: {set(duplicate_cols)}. Удаляем...")
-                df = df.loc[:, ~df.columns.duplicated()]
-                st.success("✅ Дубликаты колонок удалены")
-
-            # Корреляционный анализ
-            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-            if target_col in df.columns and len(numeric_cols) > 0:
-                if target_col not in numeric_cols:
-                    numeric_cols.append(target_col)
-
-                corr = correlation_analysis(df, numeric_cols, target_col)
-                if corr.columns.duplicated().any():
-                    corr = corr.loc[:, ~corr.columns.duplicated()]
-
-                fig_corr = px.imshow(
-                    corr,
-                    text_auto=".2f",
-                    aspect="auto",
-                    color_continuous_scale="RdBu",
-                    title="Корреляционная матрица"
+                cluster_labels, _, _ = safe_execute(
+                    cluster_students, df, n_clusters=n_clusters, feature_cols=all_features
                 )
-                st.session_state.fig_corr = fig_corr
-            else:
-                st.session_state.fig_corr = None
+                df['cluster'] = cluster_labels
 
-            # Кластеризация
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+                fig_clusters = plot_clusters_pca(df, cluster_labels, all_features)
+                cluster_profiles = pd.DataFrame(analysis_result.cluster_profiles)
 
-            status_text.text("Подготовка данных...")
-            # Берем только числовые колонки для кластеризации
-            cluster_features = [c for c in all_features if c in df.columns and df[c].dtype in [np.number]]
-            if len(cluster_features) < 2:
-                cluster_features = numeric_cols[:min(5, len(numeric_cols))]
+                # === ГРАФИКИ ===
+                fig_cm = plot_confusion_matrix(
+                    analyzer.last_y_test,
+                    analyzer.last_y_pred,
+                    analyzer.last_model_name or "Best Model"
+                ) if hasattr(analyzer, 'last_y_test') else None
 
-            X_cluster = df[all_features].fillna(df[all_features].median())
-            progress_bar.progress(25)
+                fig_roc = None
+                if hasattr(analyzer, 'last_X_test') and hasattr(analyzer, 'last_y_test'):
+                    model_for_roc = analyzer.trainer.models.get(analyzer.last_model_name)
+                    if model_for_roc is not None:
+                        fig_roc = plot_roc_curves(
+                            {analyzer.last_model_name or "Best": model_for_roc},
+                            analyzer.last_X_test,
+                            analyzer.last_y_test
+                        )
 
-            status_text.text("Масштабирование признаков...")
-            scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(X_cluster)
-            progress_bar.progress(50)
+                fig_fi = plot_feature_importance(
+                    analyzer.trainer.models.get(analyzer.last_model_name),
+                    all_features
+                ) if hasattr(analyzer, 'last_model_name') and analyzer.last_model_name else None
 
-            status_text.text("Выполнение кластеризации...")
-            cluster_labels, kmeans_model, scaler_cluster = cluster_students(
-                X_cluster,
-                n_clusters=n_clusters,
-                feature_cols=all_features
-            )
-            df['cluster'] = cluster_labels
-            progress_bar.progress(75)
-
-            status_text.text("Анализ профилей...")
-            cluster_profiles = analyze_cluster_profiles(df, all_features)
-            fig_clusters = plot_clusters_pca(
-                X_cluster,
-                cluster_labels,
-                all_features)
-            progress_bar.progress(100)
-
-            progress_bar.empty()
-            status_text.empty()
-
-            # Подготовка к обучению
-            if target_col in df.columns:
-                model_features = [c for c in all_features if c in df.columns and df[c].dtype in [np.number]]
-                if len(model_features) < 2:
-                    model_features = numeric_cols
-
-                X_resampled, y_resampled = preprocess_data(df, all_features, target_col)
-
-                # Разделяем сбалансированные данные
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X_resampled, y_resampled,
-                    test_size=0.2,
-                    random_state=42,
-                    stratify=y_resampled
-                )
-
-                # Отбор признаков
-                X_train_sel, selected_cols = select_features_for_model(
-                    X_train, y_train,
-                    final_n=n_features_to_select
-                )
-                X_test_sel = X_test[selected_cols]
-
-                # Кросс-валидация
-                cv_results = trainer.cross_validate(X_train_sel, y_train)
-                cv_df = pd.DataFrame({
-                    'Модель': list(cv_results.keys()),
-                    'F1 (среднее)': [cv_results[m]['mean'] for m in cv_results],
-                    'F1 (std)': [cv_results[m]['std'] for m in cv_results]
-                })
-
-                # Обучение лучшей модели
-                best_model, best_name, metrics = trainer.train_best_model(
-                    X_train_sel, y_train, X_test_sel, y_test
-                )
-                models_to_train = {}
-                if use_lr:
-                    models_to_train['LR'] = LogisticRegression(max_iter=1000)
-                if use_rf:
-                    models_to_train['RF'] = RandomForestClassifier(random_state=42)
-                if use_xgb:
-                    if use_hp_tuning:
-                        st.subheader("⚙️ Оптимизация гиперпараметров XGBoost")
-                        with st.spinner("Оптимизация гиперпараметров..."):
-                            xgb_tuned, best_params, best_cv_score = trainer.tune_xgboost(
-                                X_train_sel,
-                                y_train,
-                                n_iter=n_iter_tuning,
-                                cv_folds=3
-                            )
-                            st.success(f"✅ Оптимизация завершена. Лучший F1-score: {best_cv_score:.4f}")
-                            st.json(best_params)
-                            models_to_train['XGB'] = xgb_tuned
-                    else:
-                        models_to_train['XGB'] = XGBClassifier(eval_metric='logloss', random_state=42)
-
-                trainer.models = models_to_train
-
-                # Сохраняем модель
-                model_path, metadata = trainer.save_model(
-                    best_model, best_name, metrics, selected_cols
-                )
-                st.info(f"💾 Модель сохранена: {model_path}")
-
-                # Логируем результаты
-                ml_logger.log_model_metrics(best_name, metrics)
-
-                # Метрики на тесте
-                test_metrics = metrics['test']
-
-                # ROC-кривая
-                models_for_plot = {}
-                if use_lr and 'LR' in trainer.models:
-                    models_for_plot['LR'] = trainer.models['LR']
-                if use_rf and 'RF' in trainer.models:
-                    models_for_plot['RF'] = trainer.models['RF']
-                if use_xgb and 'XGB' in trainer.models:
-                    models_for_plot['XGB'] = trainer.models['XGB']
-
-                for name, model in models_for_plot.items():
-                    model.fit(X_train_sel, y_train)
-
-                if len(models_for_plot) > 0:
-                    fig_roc = plot_roc_curves(models_for_plot, X_test_sel, y_test)
-                else:
-                    fig_roc = None
-
-                # Confusion Matrix
-                y_pred = best_model.predict(X_test_sel)
-                fig_cm = plot_confusion_matrix(y_test, y_pred, best_name)
-
-                # Важность признаков
-                fig_fi = plot_feature_importance(best_model, selected_cols)
-
-                # После того как получили best_model и selected_cols
-                if st.session_state.drift_detector is None:
-                    # Отбираем нужные признаки
-                    reference_real = df[selected_cols].copy()
-
-                    st.session_state.drift_detector = DataDriftDetector(
-                        reference_data=reference_real,
-                        model_name=best_name,
-                        threshold=0.05,
-                        model_metadata={
-                            'numerical_features': selected_cols,
-                            'categorical_features': [],
-                            'baseline_metrics': test_metrics
-                        }
-                    )
-                    st.session_state.reference_data = reference_real
-
-                # SHAP объяснения
-                X_test_df = pd.DataFrame(X_test_sel, columns=selected_cols)
-                explanations = generate_shap_explanations(
-                    best_model,
-                    X_test_df,
-                    selected_cols,
-                    threshold=risk_threshold,
-                    top_n=shap_top_n
-                )
-
-                # ✅ СОХРАНЯЕМ ВСЁ В SESSION_STATE
+                # ==================== СОХРАНЕНИЕ ====================
                 st.session_state.analysis_completed = True
-                st.session_state.results_saved = True
                 st.session_state.df = df
                 st.session_state.all_features = all_features
                 st.session_state.cluster_labels = cluster_labels
                 st.session_state.cluster_profiles = cluster_profiles
                 st.session_state.fig_clusters = fig_clusters
-                st.session_state.X_train_sel = X_train_sel
-                st.session_state.X_test_sel = X_test_sel
-                st.session_state.y_train = y_train
-                st.session_state.y_test = y_test
-                st.session_state.selected_cols = selected_cols
-                st.session_state.cv_df = cv_df
-                st.session_state.best_model = best_model
-                st.session_state.best_name = best_name
-                st.session_state.metrics = metrics
                 st.session_state.test_metrics = test_metrics
-                st.session_state.models_for_plot = models_for_plot
-                st.session_state.fig_roc = fig_roc
-                st.session_state.y_pred = y_pred
-                st.session_state.fig_cm = fig_cm
-                st.session_state.fig_fi = fig_fi
                 st.session_state.explanations = explanations
+                st.session_state.best_name = analyzer.last_model_name or "Best Model"
+                st.session_state.best_model = analyzer.trainer.models.get(analyzer.last_model_name)
+                st.session_state.fig_cm = fig_cm
+                st.session_state.fig_roc = fig_roc
+                st.session_state.fig_fi = fig_fi
+                st.session_state.X_test_sel = analyzer.last_X_test
+                st.session_state.y_pred = analyzer.last_y_pred
+                st.session_state.selected_cols = all_features
 
+                # Drift Detector
+                if st.session_state.drift_detector is None and hasattr(analyzer, 'last_X_test'):
+                    st.session_state.drift_detector = DataDriftDetector(
+                        reference_data=analyzer.last_X_test,
+                        model_name=analyzer.last_model_name or "Best Model",
+                        threshold=0.05
+                    )
+                    st.session_state.reference_data = analyzer.last_X_test
+
+                st.success(f"✅ Анализ успешно завершён! Используется {len(all_features)} признаков.")
                 st.rerun()
+
+            except Exception as e:
+                logger.error(f"Критическая ошибка в блоке анализа: {str(e)}", exc_info=True)
+                st.error(f"Произошла ошибка при анализе: {str(e)}")
+                st.stop()
 
 # ==================== ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ (всегда, если есть данные) ====================
 if st.session_state.analysis_completed:
@@ -776,24 +577,42 @@ if st.session_state.analysis_completed:
 
     # Выбранные признаки
     st.subheader("📊 Выбранные признаки")
-    st.write(", ".join(st.session_state.selected_cols))
-
+    if st.session_state.get('all_features'):
+        st.write(", ".join(st.session_state.all_features))
+    else:
+        st.write("—")
     # Кросс-валидация
     st.subheader("📊 Кросс-валидация")
-    st.dataframe(st.session_state.cv_df)
+
+    cv_results = st.session_state.get('cv_results', {})
+
+    if cv_results and isinstance(cv_results, dict) and len(cv_results) > 0:        # Преобразуем в удобную таблицу
+        cv_df = pd.DataFrame({
+            'Модель': list(cv_results.keys()),
+            'F1 (среднее)': [cv_results[m]['mean'] for m in cv_results],
+            'F1 (std)': [cv_results[m]['std'] for m in cv_results]
+        })
+        st.dataframe(cv_df)
+        st.session_state.cv_df = cv_df  # сохраняем для повторного рендера
+    else:
+        st.info("Результаты кросс-валидации не были получены")
+
+    if 'cv_results' not in st.session_state or not st.session_state.cv_results:
+        st.session_state.cv_results = cv_results
 
     # Метрики на тесте
     st.subheader("📈 Метрики на тестовой выборке")
-    test_metrics = st.session_state.test_metrics
+    test_metrics = st.session_state.get('test_metrics', {})
+
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("F1-score", f"{test_metrics['f1']:.4f}")
+        st.metric("F1-score", f"{test_metrics.get('f1', 0):.4f}")
     with col2:
-        st.metric("ROC-AUC", f"{test_metrics['roc_auc']:.4f}")
+        st.metric("ROC-AUC", f"{test_metrics.get('roc_auc', 0):.4f}")
     with col3:
-        st.metric("Precision", f"{test_metrics['precision']:.4f}")
+        st.metric("Precision", f"{test_metrics.get('precision', 0):.4f}")
     with col4:
-        st.metric("Recall", f"{test_metrics['recall']:.4f}")
+        st.metric("Recall", f"{test_metrics.get('recall', 0):.4f}")
 
     # ROC-кривая
     if st.session_state.fig_roc:
@@ -820,16 +639,62 @@ if st.session_state.analysis_completed:
     with tab1:
         st.write("### Кросс-таблицы")
 
-        # Выбор переменных для кросс-таблицы
         all_cols = df.columns.tolist()
 
-        # Определяем категориальные колонки (с <20 уникальными значениями)
+        st.subheader("🔍 Настройка категориальных переменных")
+
+        # Список паттернов для автоматического определения служебных колонок
+        service_patterns = [
+            r'user', r'id', r'vk', r'фио', r'фамилия', r'имя', r'отчество',
+            r'пол', r'возраст', r'курс', r'вуз', r'направление', r'группа',
+            r'date', r'дата', r'sheet', r'source', r'cluster', r'unnamed',
+            r'index', r'номер', r'№'
+        ]
+
+
+        def is_likely_service(col: str) -> bool:
+            col_lower = str(col).lower()
+            return any(re.search(pattern, col_lower) for pattern in service_patterns)
+
+
+        # Формируем рекомендуемый список на исключение
+        recommended_exclude = [col for col in all_cols if is_likely_service(col)]
+
+        # Пользовательский выбор
+        exclude_cols = st.multiselect(
+            "Колонки, которые **исключить** из кросс-таблиц (служебные)",
+            options=all_cols,
+            default=recommended_exclude,
+            help="Снимите галочку с тех колонок, которые хотите оставить как категориальные"
+        )
+
+        # Выбор переменных для кросс-таблицы
+        cat_threshold = st.slider(
+            "Максимальное количество уникальных значений для категориальной колонки",
+            min_value=5,
+            max_value=50,
+            value=20,
+            step=5,
+            key="cat_threshold"
+        )
+        # Определяем категориальные колонки
         categorical_cols = []
         for col in all_cols:
+            if col in exclude_cols:
+                continue
             n_unique = df[col].nunique()
-            # Для числовых колонок — только если уникальных значений мало
-            if n_unique < 20:
+            dtype = str(df[col].dtype)
+
+            if dtype in ['object', 'string'] or n_unique <= cat_threshold:
                 categorical_cols.append(col)
+        categorical_cols = sorted(list(set(categorical_cols)))
+
+        st.info(f"Найдено **{len(categorical_cols)}** категориальных переменных для анализа")
+        use_binning = st.checkbox(
+            "Включить автоматический биннинг для числовых колонок (квартили)",
+            value=True,
+            help="Если включено — числовые колонки будут автоматически разбиваться на 4 группы"
+        )
 
         # Если нет категориальных, предлагаем сгенерировать бины
         if len(categorical_cols) < 2:
@@ -841,8 +706,6 @@ if st.session_state.analysis_completed:
             col_var = st.selectbox("Переменная для столбцов", all_cols)
             value_var = st.selectbox("Переменная для агрегации (опционально)", ["None"] + all_cols)
 
-            use_binning = st.checkbox("Автоматически разбить на группы (для числовых колонок)", value=True)
-
             if st.button("Построить кросс-таблицу"):
                 with st.spinner("Построение кросс-таблицы..."):
                     from ml_core.crosstab import create_crosstab
@@ -852,12 +715,15 @@ if st.session_state.analysis_completed:
                     # Бинаризуем числовые колонки, если нужно
                     if use_binning:
                         for var in [row_var, col_var]:
-                            if var in df_work.columns and df_work[var].dtype in [np.number] and df_work[
-                                var].nunique() > 10:
+                            if var in df_work.columns and df_work[var].dtype in [np.number] and df_work[var].nunique() > 10:
                                 # Разбиваем на квартили или децили
-                                df_work[f"{var}_group"] = pd.qcut(df_work[var], q=4,
-                                                                  labels=['Низкий', 'Ниже среднего', 'Выше среднего',
-                                                                          'Высокий'], duplicates='drop')
+                                df_work[f"{var}_group"] = pd.qcut(df_work[var],
+                                                                  q=4,
+                                                                  labels=['Низкий',
+                                                                          'Ниже среднего',
+                                                                          'Выше среднего',
+                                                                          'Высокий'],
+                                                                  duplicates='drop')
                                 if var == row_var:
                                     row_var = f"{var}_group"
                                 else:
@@ -882,8 +748,7 @@ if st.session_state.analysis_completed:
 
                     if result['chi2_test']:
                         st.write(f"**Хи-квадрат тест:** p-value = {result['chi2_test']['p_value']:.4f}")
-                        st.write(
-                            f"**Статистически значимо:** {'✅ Да' if result['chi2_test']['significant'] else '❌ Нет'}")
+                        st.write(f"**Статистически значимо:** {'✅ Да' if result['chi2_test']['significant'] else '❌ Нет'}")
 
                     if result['table'].shape[0] * result['table'].shape[1] < 1000:
                         st.plotly_chart(result['heatmap'], use_container_width=True)
@@ -909,14 +774,12 @@ if st.session_state.analysis_completed:
 
                     if result['chi2_test']:
                         st.write(f"**Хи-квадрат тест:** p-value = {result['chi2_test']['p_value']:.4f}")
-                        st.write(
-                            f"**Статистически значимо:** {'✅ Да' if result['chi2_test']['significant'] else '❌ Нет'}")
+                        st.write(f"**Статистически значимо:** {'✅ Да' if result['chi2_test']['significant'] else '❌ Нет'}")
 
                     if result['table'].shape[0] * result['table'].shape[1] < 1000:
                         st.plotly_chart(result['heatmap'], use_container_width=True)
                         st.plotly_chart(result['stacked_bar'], use_container_width=True)
-                    else:
-                        st.info("Графики скрыты для производительности (слишком большая таблица)")
+                    else:st.info("Графики скрыты для производительности (слишком большая таблица)")
     with tab2:
         st.write("### История экспериментов")
 
@@ -1064,32 +927,104 @@ if st.session_state.analysis_completed:
             # Обновляем df в session_state
             st.session_state.df = df_clean
             st.success("Данные обновлены! Перезапустите анализ для применения изменений.")
-    with tab5:  # или создай новую вкладку "Композитные оценки"
-        st.write("### Конструктор композитных оценок")
+    with tab5:
+        st.subheader("### Конструктор композитных оценок")
 
-        available_features = [col for col in all_features if df[col].dtype in [np.number]]
+        if 'df' not in st.session_state or st.session_state.df is None:
+            st.warning("Сначала загрузите данные и выполните анализ")
+            st.stop()
 
+        current_df = st.session_state.df
+
+        # === Улучшенная фильтрация: исключаем служебные колонки ===
+        service_patterns = [
+            r'^user', r'^user_id', r'^vk', r'^VK', r'^id', r'^index',
+            r'фамилия', r'имя', r'отчество', r'фио', r'вуз', r'направление',
+            r'пол', r'возраст', r'курс', r'группа', r'дата', r'date',
+            r'sheet', r'source', r'unnamed', r'cluster', r'risk_flag',
+            r'risk_pred', r'prediction'
+        ]
+
+
+        def is_service_column(col: str) -> bool:
+            col_lower = str(col).lower()
+            return any(re.search(pattern, col_lower) for pattern in service_patterns)
+
+
+        # Берем только числовые колонки, которые НЕ являются служебными
+        numeric_features = [
+            col for col in current_df.columns
+            if current_df[col].dtype.kind in 'biufc'  # числовые типы
+               and not is_service_column(col)
+               and current_df[col].nunique() > 1  # исключаем константы
+        ]
+
+        if not numeric_features:
+            st.error("В данных не найдено подходящих числовых признаков для создания композитной оценки")
+            st.stop()
+
+        st.write(f"Доступно **{len(numeric_features)}** числовых признаков для построения композитной оценки")
+
+        # === Интерфейс задания весов ===
         weights = {}
-        col1, col2 = st.columns(2)
-        for i, feat in enumerate(available_features[:8]):  # ограничим для удобства
-            with col1 if i % 2 == 0 else col2:
-                weight = st.slider(f"Вес для {feat}", -1.0, 1.0, 0.0, 0.05, key=f"w_{feat}")
+        cols_layout = st.columns(3)
+
+        for i, feat in enumerate(numeric_features):
+            with cols_layout[i % 3]:
+                weight = st.slider(
+                    label=f"{feat}",
+                    min_value=-3.0,
+                    max_value=3.0,
+                    value=0.0,
+                    step=0.05,
+                    key=f"weight_{feat}"
+                )
                 weights[feat] = weight
 
-        score_name = st.text_input("Название новой оценки", "custom_risk_index")
+        score_name = st.text_input(
+            "Название новой композитной оценки",
+            value="custom_risk_index",
+            key="score_name_input"
+        )
 
-        if st.button("Создать композитную оценку"):
-            df_new, new_col = safe_execute(
-                build_composite_score,
-                df, weights, score_name,
-                error_msg="Ошибка при создании композитной оценки"
-            )
-            if new_col in df_new.columns:
-                st.success(f"Создана оценка **{new_col}**")
-                st.dataframe(df_new[[new_col]].describe())
-                # Добавь в all_features для дальнейшего использования
-                st.session_state.all_features.append(new_col)
-                st.session_state.df = df_new
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            if st.button("Создать композитную оценку", type="primary", use_container_width=True):
+                active_weights = {k: v for k, v in weights.items() if abs(v) > 1e-6}
+
+                if not active_weights:
+                    st.error("❌ Укажите хотя бы один ненулевой вес")
+                else:
+                    with st.spinner("Создаётся композитная оценка..."):
+                        try:
+                            df_new, new_col = build_composite_score(
+                                current_df,
+                                active_weights,
+                                score_name=score_name
+                            )
+
+                            st.success(f"✅ Создана оценка **{new_col}**")
+                            st.dataframe(df_new[[new_col]].describe().round(4))
+
+                            st.write("**Использованные веса:**")
+                            st.json(active_weights)
+
+                            # Обновляем данные
+                            st.session_state.df = df_new
+                            if new_col not in st.session_state.get('all_features', []):
+                                if 'all_features' not in st.session_state:
+                                    st.session_state.all_features = []
+                                st.session_state.all_features.append(new_col)
+
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error(f"Ошибка при создании оценки: {str(e)}")
+                            logger.error(f"build_composite_score error: {e}", exc_info=True)
+
+        with col2:
+            if st.button("Сбросить все веса"):
+                st.rerun()
     # SHAP объяснения
     st.subheader("💡 Объяснения предсказаний")
     if st.session_state.explanations:

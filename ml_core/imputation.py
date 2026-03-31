@@ -34,6 +34,7 @@ def handle_missing_values(df, strategy='auto', threshold=30):
     report : dict
         Отчет о выполненной обработке
     """
+    df = df.copy()
     df_clean = df.copy()
     report = {
         'original_shape': df.shape,
@@ -119,6 +120,8 @@ def detect_outliers(df, columns=None, method='iqr', threshold=1.5):
     outliers_report : dict
         Отчет о выбросах
     """
+    df = df.copy()
+
     if columns is None:
         columns = df.select_dtypes(include=[np.number]).columns.tolist()
 

@@ -4,11 +4,10 @@
 """
 import pandas as pd
 import numpy as np
-import streamlit as st
 import os
 import datetime
 from sklearn.model_selection import train_test_split
-import seaborn as sns
+from functools import lru_cache
 
 
 def save_synthetic_data(df, filename=None, directory='analysis_data/synthetic'):
@@ -23,6 +22,8 @@ def save_synthetic_data(df, filename=None, directory='analysis_data/synthetic'):
     Returns:
         str: путь к сохраненному файлу
     """
+    df = df.copy()
+
     # Создаем директорию если её нет
     os.makedirs(directory, exist_ok=True)
 
@@ -51,7 +52,9 @@ def save_data_for_monitoring(df, feature_cols, semester="spring_2026", directory
         semester: название семестра
         directory: директория для сохранения
     """
+    df = df.copy()
     os.makedirs(directory, exist_ok=True)
+
 
     # Сохраняем только признаки (без target)
     monitoring_data = df[feature_cols].copy()
@@ -63,7 +66,7 @@ def save_data_for_monitoring(df, feature_cols, semester="spring_2026", directory
 
 
 # ---- Загрузка данных согласно ТЗ ----
-@st.cache_data(ttl=3600)
+@lru_cache(maxsize=32)
 def load_data(category: str = 'grades', n_students: int = 500, generate_two_sets: bool = False):
     """
     Загружает синтетические данные для выбранной категории.
@@ -353,6 +356,7 @@ def prepare_data_for_training(df, feature_cols, target_col='risk_flag', test_siz
     """
     Подготовка данных для обучения
     """
+    df = df.copy()
     X = df[feature_cols].copy()
     y = df[target_col].copy()
 

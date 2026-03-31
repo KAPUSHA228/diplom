@@ -14,7 +14,9 @@ def analyze_student_trajectory(df, student_id, time_col='semester',
     """
     Анализ траектории одного студента во времени.
     """
+    df = df.copy()
     student_df = df[df['student_id'] == student_id].sort_values(time_col)
+
 
     if len(student_df) < min_semesters:
         return {'error': f'Недостаточно данных (нужно минимум {min_semesters} семестров)'}
@@ -76,6 +78,7 @@ def analyze_cohort_trajectory(df, cohort_col='year', time_col='semester', value_
     """
     Анализ траекторий когорт (групп студентов) во времени.
     """
+    df = df.copy()
     cohorts = df.groupby(cohort_col).mean(numeric_only=True).reset_index()
 
     fig = px.line(
@@ -115,6 +118,7 @@ def detect_negative_dynamics(df, student_id_col='student_id', time_col='semester
     --------
     dict с результатами
     """
+    df = df.copy()
     # Проверяем наличие необходимых колонок
     if time_col not in df.columns:
         return {
@@ -224,6 +228,7 @@ def create_temporal_features(df, time_col='semester', student_id_col='student_id
     --------
     pd.DataFrame с добавленными временными признаками
     """
+    df = df.copy()
     result_df = df.copy()
 
     # Сортируем по студенту и времени
@@ -242,6 +247,7 @@ def create_temporal_features(df, time_col='semester', student_id_col='student_id
 
 
 def forecast_grades(df, student_id, time_col='semester', value_col='avg_grade', future_semesters=2):
+    df = df.copy()
     student_data = df[df['student_id'] == student_id].sort_values(time_col)
     X = student_data[time_col].values.reshape(-1, 1)
     y = student_data[value_col].values

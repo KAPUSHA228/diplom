@@ -90,6 +90,8 @@ class DataDriftDetector:
 
     def _compute_statistics(self, df: pd.DataFrame) -> Dict:
         """Вычисление статистик по данным"""
+        df = df.copy()
+
         stats = {
             'numerical': {},
             'categorical': {},
@@ -259,6 +261,7 @@ class DataDriftDetector:
 
     def _check_data_quality(self, df: pd.DataFrame) -> Dict:
         """Проверка качества новых данных"""
+        df = df.copy()
         quality_report = {}
 
         # Проверка на пропуски
