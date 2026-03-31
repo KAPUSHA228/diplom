@@ -3,4 +3,5 @@
 /logs
 /models
 docker-compose.yml
-/docker-compose.yml
+/experiments
+/analysis_data
