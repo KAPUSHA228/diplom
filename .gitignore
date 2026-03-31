@@ -4,4 +4,5 @@
 /models
 docker-compose.yml
 /experiments
-/analysis_data
+logs/drift_reports/
+logs/m
