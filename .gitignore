@@ -6,3 +6,5 @@ docker-compose.yml
 /experiments
 logs/drift_reports/
 logs/
+/analysis_data
+/data

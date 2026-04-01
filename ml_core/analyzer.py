@@ -90,14 +90,6 @@ class ResearchAnalyzer:
             self.last_y_test = y_test
             self.last_y_pred = model.predict(X_test)
 
-            # Возвращаем результат
-            # Сохраняем всё необходимое для визуализации
-            self.last_X_test = X_test
-            self.last_y_test = y_test
-            self.last_y_pred = model.predict(X_test)
-            self.last_model_name = model_name
-            self.last_features = all_features
-
             # Генерируем графики сразу
             fig_cm = plot_confusion_matrix(y_test, self.last_y_pred, model_name)
             fig_roc = plot_roc_curves({model_name: model}, X_test, y_test)
@@ -168,3 +160,105 @@ class ResearchAnalyzer:
         from .experiment_tracker import ExperimentTracker
         tracker = ExperimentTracker()
         return tracker.load_experiment(experiment_id)
+
+    def run_full_analysis_by_request(self, request: AnalysisRequest) -> AnalysisResult:
+        """
+        Высокоуровневый метод для вызова из бэкенда или внешних сервисов.
+        Принимает структурированный запрос и возвращает результат анализа.
+
+        Этот метод предназначен для интеграции с подсистемой хранения и бэкендом.
+        """
+        try:
+            # Здесь в будущем будет загрузка данных из БД по request.data_source_id
+            # Пока оставляем прямой приём df (для совместимости)
+            if request.df is None:
+                raise ValueError("DataFrame не передан в запросе. Используйте run_full_analysis напрямую.")
+
+            # Преобразуем Any в DataFrame, если пришёл dict/list
+            if isinstance(request.df, (dict, list)):
+                df = pd.DataFrame(request.df)
+            else:
+                df = request.df
+
+            return self.run_full_analysis(
+                df=df,
+                target_col=request.target_col,
+                n_clusters=request.n_clusters,
+                risk_threshold=request.risk_threshold,
+                corr_threshold=request.corr_threshold,
+                is_synthetic=request.is_synthetic,
+                use_smote=request.use_smote
+            )
+
+        except Exception as e:
+            logger.error(f"Ошибка в run_full_analysis_by_request: {str(e)}", exc_info=True)
+            return AnalysisResult(
+                metrics={},
+                test_metrics={},
+                selected_features=[],
+                cluster_profiles={},
+                explanations=[],
+                status="error",
+                message=str(e)
+            )
+
+    def run_full_analysis_by_source(
+            self,
+            source_id: int,
+            source_type: str = "prepared_survey",
+            n_clusters: int = 3,
+            risk_threshold: float = 0.5,
+            corr_threshold: float = 0.3,
+            use_smote: bool = True,
+            **kwargs
+    ) -> AnalysisResult:
+        """
+        Удобный метод для вызова из бэкенда по ID данных.
+        Загружает данные из хранилища и запускает полный анализ.
+        """
+        try:
+            # Здесь в будущем будет вызов репозитория / ORM
+           ################################################ Пока — заглушка. Заменить на реальную загрузку из БД
+            df = self._load_prepared_data(source_id, source_type)
+
+            if df is None or df.empty:
+                return AnalysisResult(
+                    status="error",
+                    message=f"Данные с source_id={source_id} не найдены или пусты"
+                )
+
+            # Определяем is_synthetic для get_base_features
+            is_synthetic = source_type.startswith("synthetic")
+
+            return self.run_full_analysis(
+                df=df,
+                target_col=kwargs.get("target_col", "risk_flag"),
+                n_clusters=n_clusters,
+                risk_threshold=risk_threshold,
+                corr_threshold=corr_threshold,
+                is_synthetic=is_synthetic,
+                use_smote=use_smote
+            )
+
+        except Exception as e:
+            logger.error(f"Ошибка в run_full_analysis_by_source: {str(e)}", exc_info=True)
+            return AnalysisResult(
+                status="error",
+                message=str(e)
+            )
+
+    # Вспомогательный приватный метод-заглушка
+    def _load_prepared_data(self, source_id: int, source_type: str) -> Optional[pd.DataFrame]:
+        """
+        В будущем здесь будет обращение к БД / хранилищу.
+        Сейчас — заглушка для отладки.
+        """
+        # Пример: если source_type == "synthetic", можно загрузить из data.py
+        if source_type == "synthetic":
+            from .data import load_data
+            result = load_data(category="grades", n_students=500)
+            return result['data']
+
+        # Для реальных данных — здесь будет запрос в БД
+        logger.warning(f"Заглушка: данные для source_id={source_id} не загружены")
+        return None
