@@ -12,6 +12,7 @@ import os
 import logging
 import threading
 import time
+import plotly.graph_objects as go
 
 
 class DriftMonitorThread:
@@ -372,3 +373,58 @@ def generate_recommendations(self, drift_report):
     else:
         recs.append("Данные стабильны — модель можно использовать")
     return recs
+
+def plot_drift_visualization(drift_report, reference_data, current_data):
+    """
+    Визуализация дрейфа для ключевых признаков
+    """
+    import plotly.subplots as sp
+
+    # Берем топ-4 признака с наибольшим дрейфом
+    drifted_features = drift_report['drifted_features'][:4]
+
+    if not drifted_features:
+        return None
+
+    # Создаем подграфики
+    fig = sp.make_subplots(
+        rows=2, cols=2,
+        subplot_titles=drifted_features,
+        vertical_spacing=0.15
+    )
+
+    for i, feature in enumerate(drifted_features):
+        row = i // 2 + 1
+        col = i % 2 + 1
+
+        # Добавляем распределение эталонных данных
+        fig.add_trace(
+            go.Histogram(
+                x=reference_data[feature],
+                name='Эталон',
+                opacity=0.7,
+                marker_color='blue',
+                nbinsx=30
+            ),
+            row=row, col=col
+        )
+
+        # Добавляем распределение новых данных
+        fig.add_trace(
+            go.Histogram(
+                x=current_data[feature],
+                name='Новые данные',
+                opacity=0.7,
+                marker_color='red',
+                nbinsx=30
+            ),
+            row=row, col=col
+        )
+
+    fig.update_layout(
+        height=600,
+        title_text="Сравнение распределений признаков",
+        showlegend=True
+    )
+
+    return fig

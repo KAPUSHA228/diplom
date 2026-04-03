@@ -11,72 +11,14 @@ from ml_core.features import add_composite_features
 from ml_core.analysis import cluster_students, plot_clusters_pca
 from ml_core.models import ModelTrainer
 from ml_core.evaluation import plot_roc_curves, plot_confusion_matrix, plot_feature_importance
-import plotly.graph_objects as go
-from monitoring.logger import MLLogger
-from monitoring.drift_detector import DataDriftDetector
+from ml_core.logger import MLLogger
+from ml_core.drift_detector import DataDriftDetector
 from ml_core.analysis import correlation_analysis_enhanced
 from ml_core.features import build_composite_score
 from ml_core.timeseries import forecast_grades
 from ml_core.crosstab import export_crosstab
 from ml_core.error_handler import safe_execute, logger
 from ml_core.analysis import save_plotly_fig
-from ml_core.loader import get_sheet_names, load_excel_sheet
-
-
-def plot_drift_visualization(drift_report, reference_data, current_data):
-    """
-    Визуализация дрейфа для ключевых признаков
-    """
-    import plotly.subplots as sp
-
-    # Берем топ-4 признака с наибольшим дрейфом
-    drifted_features = drift_report['drifted_features'][:4]
-
-    if not drifted_features:
-        return None
-
-    # Создаем подграфики
-    fig = sp.make_subplots(
-        rows=2, cols=2,
-        subplot_titles=drifted_features,
-        vertical_spacing=0.15
-    )
-
-    for i, feature in enumerate(drifted_features):
-        row = i // 2 + 1
-        col = i % 2 + 1
-
-        # Добавляем распределение эталонных данных
-        fig.add_trace(
-            go.Histogram(
-                x=reference_data[feature],
-                name='Эталон',
-                opacity=0.7,
-                marker_color='blue',
-                nbinsx=30
-            ),
-            row=row, col=col
-        )
-
-        # Добавляем распределение новых данных
-        fig.add_trace(
-            go.Histogram(
-                x=current_data[feature],
-                name='Новые данные',
-                opacity=0.7,
-                marker_color='red',
-                nbinsx=30
-            ),
-            row=row, col=col
-        )
-
-    fig.update_layout(
-        height=600,
-        title_text="Сравнение распределений признаков",
-        showlegend=True
-    )
-
-    return fig
 
 
 # Инициализация session_state
