@@ -8,4 +8,9 @@ logs/drift_reports/
 logs/
 /analysis_data
 /data
+ml_core/__pycache__/
+monitoring/__pycache__/
+api/__pycache__/
+api/routers/__pycache__/
+
 
