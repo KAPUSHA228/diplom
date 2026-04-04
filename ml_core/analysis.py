@@ -78,6 +78,19 @@ def plot_clusters_pca(df, labels, features):
     df = df.copy()
 
     X = df[features].fillna(df[features].median())
+
+    # Если признаков меньше 2 — не делаем PCA, просто рисуем точки по одному признаку
+    if len(features) < 2:
+        fig = px.scatter(
+            x=X.iloc[:, 0],
+            y=[0] * len(X),  # искусственная вторая ось
+            color=labels,
+            title=f"Кластеризация (только 1 числовой признак: {features[0]})",
+            labels={'x': features[0], 'y': ' '}
+        )
+        fig.update_yaxes(visible=False)
+        return fig
+
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
