@@ -7,11 +7,15 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from imblearn.over_sampling import SMOTE
 from sklearn.feature_selection import mutual_info_classif, RFE
-
+from itertools import combinations
+from typing import List, Dict, Union, Optional
 from ml_core.error_handler import logger
 
 
-def build_composite_score(df, feature_weights: dict, score_name="custom_score", normalize=True):
+def build_composite_score(df, feature_weights: dict,
+                          score_name="custom_score",
+                          normalize: bool = True,
+                          assign_id: bool = True) -> tuple[pd.DataFrame, str]:
     """
     Конструктор композитной оценки.
 
@@ -29,11 +33,15 @@ def build_composite_score(df, feature_weights: dict, score_name="custom_score", 
             score += col * weight
 
     df[score_name] = score
+    if assign_id:
+        df[f"{score_name}_id"] = pd.qcut(
+            df[score_name],
+            q=100,
+            labels=False,
+            duplicates='drop'
+        ) + 1  # от 1 до 100
     return df, score_name
 
-
-# ---- Композитные признаки согласно ТЗ ----
-# ml_core/features.py
 
 def add_composite_features(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -103,24 +111,32 @@ def add_composite_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def get_base_features(df: pd.DataFrame, is_synthetic: bool = False) -> list:
     """
-    Определение базовых признаков из ТЗ
+    Определение базовых признаков для анализа.
+    Для синтетических данных берёт все числовые колонки, кроме служебных.
     """
     df = df.copy()
+
     exclude = {
-        'user', 'user_id', 'VK_id', 'vk ID', 'Фамилия', 'Имя', 'ВУЗ',
-        'дата', 'date', '_source_sheet', '_sheet_type', 'cluster', 'risk_flag'
+        'student_id', 'user', 'user_id', 'VK_id', 'vk ID',
+        'Фамилия', 'Имя', 'ВУЗ', 'дата', 'date',
+        '_source_sheet', '_sheet_type', 'cluster',
+        'risk_flag', 'burnout_risk', 'high_creativity',
+        'value_profile', 'leadership_potential',
+        'active_participation', 'career_clarity'
     }
+
     if is_synthetic:
-        # Для синтетики — жёсткий список
-        synthetic_cols = [
-            'avg_grade', 'grade_std', 'min_grade', 'max_grade', 'n_courses', 'avg_brs',
-            'satisfaction_score', 'engagement_score', 'workload_perception',
-            'stress_level', 'motivation_score', 'anxiety_score',
-            'n_essays', 'avg_essay_grade'
-        ]
-        return [col for col in synthetic_cols if col in df.columns]
+        # Для синтетики берём ВСЕ числовые колонки, кроме исключений
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        features = [col for col in numeric_cols if col not in exclude]
+
+        # Если после исключения ничего не осталось — берём все числовые кроме student_id
+        if not features:
+            features = [col for col in numeric_cols if col != 'student_id']
+
+        return features
     else:
-        # Для реальных данных — все числовые колонки
+        # Для реальных данных — все числовые, кроме служебных
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         return [col for col in numeric_cols if col not in exclude]
 
@@ -190,3 +206,63 @@ def preprocess_data_for_smote(X_train: pd.DataFrame, y_train: pd.Series):
     smote = SMOTE(random_state=42, k_neighbors=min(5, min_class_size - 1))
     X_res, y_res = smote.fit_resample(X_train, y_train)
     return X_res, y_res
+
+
+def create_feature_combinations(
+    df: pd.DataFrame,
+    numerical_cols: Optional[List[str]] = None,
+    text_cols: Optional[List[str]] = None,
+    max_pairs: int = 15,
+    methods: List[str] = None
+) -> pd.DataFrame:
+    """
+    Автоматически создаёт новые признаки путём объединения существующих.
+    Поддерживает: num+num, num+text, text+text.
+    """
+    if methods is None:
+        methods = ['sum', 'diff', 'ratio', 'product', 'concat']
+
+    df = df.copy()
+    new_features = {}
+
+    # 1. Числовые + Числовые
+    if numerical_cols is None:
+        numerical_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+
+    for col1, col2 in combinations(numerical_cols, 2):
+        if len(new_features) >= max_pairs:
+            break
+        if col1 == col2:
+            continue
+
+        if 'sum' in methods:
+            new_features[f"{col1}_plus_{col2}"] = df[col1] + df[col2]
+        if 'diff' in methods:
+            new_features[f"{col1}_minus_{col2}"] = df[col1] - df[col2]
+        if 'ratio' in methods and (df[col2] != 0).all():
+            new_features[f"{col1}_div_{col2}"] = df[col1] / df[col2]
+        if 'product' in methods:
+            new_features[f"{col1}_mul_{col2}"] = df[col1] * df[col2]
+
+    # 2. Числовые + Текстовые
+    if text_cols is None:
+        text_cols = [col for col in df.columns if df[col].dtype == 'object']
+
+    for num_col in numerical_cols[:3]:           # ограничиваем, чтобы не плодить слишком много
+        for txt_col in text_cols:
+            if len(new_features) >= max_pairs:
+                break
+            # Пример: длина текста * числовой признак
+            new_features[f"{num_col}_by_{txt_col}_len"] = df[num_col] * df[txt_col].astype(str).str.len()
+
+    # 3. Текстовые + Текстовые
+    for col1, col2 in combinations(text_cols, 2):
+        if len(new_features) >= max_pairs:
+            break
+        new_features[f"{col1}_and_{col2}"] = (
+            df[col1].astype(str) + " | " + df[col2].astype(str)
+        )
+
+    # Добавляем новые признаки
+    df = pd.concat([df, pd.DataFrame(new_features)], axis=1)
+    return df

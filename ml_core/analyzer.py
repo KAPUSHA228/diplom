@@ -13,6 +13,7 @@ from .schemas import AnalysisRequest, AnalysisResult
 from .timeseries import detect_negative_dynamics, analyze_student_trajectory, forecast_grades
 from .text_processor import extract_text_features
 from sklearn.model_selection import train_test_split
+import numpy as np
 
 
 class ResearchAnalyzer:
@@ -53,6 +54,11 @@ class ResearchAnalyzer:
                 cluster_students, df, n_clusters=n_clusters, feature_cols=all_features
             )
             df = df.copy()
+            # Перед вызовом кластеризации
+            if not all_features:
+                logger.warning("all_features пустой. Используем все числовые колонки кроме student_id")
+                all_features = [col for col in df.select_dtypes(include=[np.number]).columns
+                                if col != 'student_id']
             df['cluster'] = cluster_labels
             cluster_profiles = analyze_cluster_profiles(df, all_features)
 
@@ -66,7 +72,6 @@ class ResearchAnalyzer:
 
             if use_smote:
                 X_train, y_train = preprocess_data_for_smote(X_train, y_train)  # новая функция
-
 
             model, model_name, metrics = self.trainer.train_best_model(
                 X_train, y_train, X_test, y_test
@@ -135,6 +140,33 @@ class ResearchAnalyzer:
     def forecast_for_student(self, df: pd.DataFrame, student_id, future_semesters: int = 2):
         """Прогноз на будущие семестры"""
         return forecast_grades(df, student_id, future_semesters=future_semesters)
+
+    def select_subset(
+            self,
+            df: pd.DataFrame,
+            condition: str = None,
+            n_samples: int = None,
+            random_state: int = 42,
+            by_cluster: int = None
+    ) -> pd.DataFrame:
+        """
+        Выделение подмножества респондентов:
+        - по произвольному условию (строка pandas query)
+        - случайная выборка
+        - по кластеру
+        """
+        df = df.copy()
+
+        if condition:
+            subset = df.query(condition)
+        elif by_cluster is not None:
+            subset = df[df['cluster'] == by_cluster]
+        elif n_samples:
+            subset = df.sample(n=min(n_samples, len(df)), random_state=random_state)
+        else:
+            subset = df
+
+        return subset.reset_index(drop=True)
 
     def save_experiment(self, name: str, additional_data: dict = None) -> str:
         """Сохраняет текущий эксперимент"""
@@ -218,7 +250,7 @@ class ResearchAnalyzer:
         """
         try:
             # Здесь в будущем будет вызов репозитория / ORM
-           ################################################ Пока — заглушка. Заменить на реальную загрузку из БД
+            #TODO Пока — заглушка. Заменить на реальную загрузку из БД
             df = self._load_prepared_data(source_id, source_type)
 
             if df is None or df.empty:
@@ -248,7 +280,9 @@ class ResearchAnalyzer:
             )
 
     # Вспомогательный приватный метод-заглушка
-    def _load_prepared_data(self, source_id: int, source_type: str) -> Optional[pd.DataFrame]:
+    def _load_prepared_data(self,
+                            source_id: int,
+                            source_type: str) -> Optional[pd.DataFrame]:
         """
         В будущем здесь будет обращение к БД / хранилищу.
         Сейчас — заглушка для отладки.
