@@ -1,0 +1,10 @@
+{
+  "status": "success",
+  "f1": 0.19047619047619047,
+  "roc_auc": 0.3516666666666666,
+  "precision": 0.18181818181818182,
+  "recall": 0.2,
+  "n_features_selected": 21,
+  "n_explanations": 15,
+  "n_clusters": 23
+}
