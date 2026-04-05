@@ -1,16 +1,16 @@
 /.venv
 /.idea
-/logs
-/models
+/models/
 docker-compose.yml
-/experiments
+/experiments/
 logs/drift_reports/
 logs/
-/analysis_data
-/data
+/analysis_data/
+/data/
 ml_core/__pycache__/
 monitoring/__pycache__/
 api/__pycache__/
 api/routers/__pycache__/
+/monitoring/
 
 

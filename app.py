@@ -20,7 +20,6 @@ from ml_core.crosstab import export_crosstab
 from ml_core.error_handler import safe_execute, logger
 from ml_core.analysis import save_plotly_fig
 
-
 # Инициализация session_state
 if 'results_saved' not in st.session_state:
     st.session_state.results_saved = False
@@ -75,7 +74,9 @@ st.markdown("---")
 
 # Инициализация трейнера моделей
 trainer = ModelTrainer(models_dir='models')
-
+if 'analyzer' not in st.session_state:
+    st.session_state.analyzer = ResearchAnalyzer()
+analyzer = st.session_state.analyzer
 # Боковая панель с настройками
 with st.sidebar:
     st.header("⚙️ Настройки")
@@ -168,7 +169,7 @@ with st.sidebar:
                 f.write(excel_file.getbuffer())
 
             merge_all = st.checkbox(
-                "Объединить все листы по user / user_id / VK_id",
+                "Объединить все листы по user / user_id / *_id",
                 value=False,
                 help="Включает режим полного мёрджa всех листов из файла"
             )
@@ -191,6 +192,7 @@ with st.sidebar:
                             st.error(f"❌ {msg}")
             else:
                 from ml_core.loader import get_sheet_names, load_excel_sheet
+
                 sheet_names = get_sheet_names(temp_path)
 
                 if 'selected_sheet' not in st.session_state:
@@ -447,11 +449,47 @@ if st.session_state.data_loaded and st.session_state.target_selected:
                 st.stop()
 
 # ==================== ОТОБРАЖЕНИЕ РЕЗУЛЬТАТОВ (всегда, если есть данные) ====================
+
 if st.session_state.analysis_completed:
+    # ==================== ПРЕДПРОСМОТР ЗАГРУЖЕННЫХ ДАННЫХ ====================
     df = st.session_state.df
     all_features = st.session_state.all_features
     target_col = st.session_state.get('target_column', 'risk_flag')
 
+    st.subheader("🔍 Предпросмотр загруженных сырых данных")
+
+    df_raw = st.session_state.raw_df
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.write(f"**Размер таблицы:** {df_raw.shape[0]:,} строк × {df_raw.shape[1]} колонок")
+
+    with col2:
+        if st.button("Обновить предпросмотр"):
+            st.rerun()
+
+    # Информация о пропусках
+    missing = df_raw.isna().sum()
+    missing = missing[missing > 0]
+
+    if not missing.empty:
+        st.write("**Колонки с пропусками:**")
+        st.dataframe(
+            missing.to_frame(name="Количество пропусков").sort_values(by="Количество пропусков", ascending=False))
+    else:
+        st.success("✅ В данных нет пропусков")
+
+    # Показываем типы данных
+    st.write("**Типы данных по колонкам:**")
+    dtype_df = df_raw.dtypes.to_frame(name="Тип данных")
+    dtype_df["Уникальных значений"] = df_raw.nunique()
+    st.dataframe(dtype_df)
+
+    # Показываем первые строки
+    st.write("**Первые 10 строк:**")
+    st.dataframe(df_raw.head(10))
+
+    st.markdown("---")
     # Информация о данных
     st.subheader("📋 Информация о данных")
     col1, col2, col3, col4 = st.columns(4)
@@ -528,7 +566,7 @@ if st.session_state.analysis_completed:
 
     cv_results = st.session_state.get('cv_results', {})
 
-    if cv_results and isinstance(cv_results, dict) and len(cv_results) > 0:        # Преобразуем в удобную таблицу
+    if cv_results and isinstance(cv_results, dict) and len(cv_results) > 0:  # Преобразуем в удобную таблицу
         cv_df = pd.DataFrame({
             'Модель': list(cv_results.keys()),
             'F1 (среднее)': [cv_results[m]['mean'] for m in cv_results],
@@ -569,12 +607,14 @@ if st.session_state.analysis_completed:
 
     st.subheader("📊 Продвинутый анализ")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "📈 Кросс-таблицы",
         "📁 История экспериментов",
         "📉 Временные ряды",
         "🔧 Обработка пропусков",
-        "Конструктор композитных оценок"
+        "Конструктор композитных оценок",
+        "Объединение признаков",
+        "🔍 Выделение подмножества респондентов"
 
     ])
 
@@ -657,7 +697,8 @@ if st.session_state.analysis_completed:
                     # Бинаризуем числовые колонки, если нужно
                     if use_binning:
                         for var in [row_var, col_var]:
-                            if var in df_work.columns and df_work[var].dtype in [np.number] and df_work[var].nunique() > 10:
+                            if var in df_work.columns and df_work[var].dtype in [np.number] and df_work[
+                                var].nunique() > 10:
                                 # Разбиваем на квартили или децили
                                 df_work[f"{var}_group"] = pd.qcut(df_work[var],
                                                                   q=4,
@@ -690,7 +731,8 @@ if st.session_state.analysis_completed:
 
                     if result['chi2_test']:
                         st.write(f"**Хи-квадрат тест:** p-value = {result['chi2_test']['p_value']:.4f}")
-                        st.write(f"**Статистически значимо:** {'✅ Да' if result['chi2_test']['significant'] else '❌ Нет'}")
+                        st.write(
+                            f"**Статистически значимо:** {'✅ Да' if result['chi2_test']['significant'] else '❌ Нет'}")
 
                     if result['table'].shape[0] * result['table'].shape[1] < 1000:
                         st.plotly_chart(result['heatmap'], use_container_width=True)
@@ -716,12 +758,14 @@ if st.session_state.analysis_completed:
 
                     if result['chi2_test']:
                         st.write(f"**Хи-квадрат тест:** p-value = {result['chi2_test']['p_value']:.4f}")
-                        st.write(f"**Статистически значимо:** {'✅ Да' if result['chi2_test']['significant'] else '❌ Нет'}")
+                        st.write(
+                            f"**Статистически значимо:** {'✅ Да' if result['chi2_test']['significant'] else '❌ Нет'}")
 
                     if result['table'].shape[0] * result['table'].shape[1] < 1000:
                         st.plotly_chart(result['heatmap'], use_container_width=True)
                         st.plotly_chart(result['stacked_bar'], use_container_width=True)
-                    else:st.info("Графики скрыты для производительности (слишком большая таблица)")
+                    else:
+                        st.info("Графики скрыты для производительности (слишком большая таблица)")
     with tab2:
         st.write("### История экспериментов")
 
@@ -846,13 +890,21 @@ if st.session_state.analysis_completed:
         missing_before = df.isna().sum().sum()
         st.write(f"**Пропусков до обработки:** {missing_before}")
         st.dataframe(df.isna().sum().to_frame('Пропуски'))
+        if missing_before > 0:
+            st.dataframe(
+                df.isna().sum().to_frame('Пропуски')
+                .sort_values(by='Пропуски', ascending=False)
+            )
+        else:
+            st.success("✅ В данных нет пропусков")
 
         # Выбросы
         outliers = detect_outliers(df)
-        st.write("### Выбросы в данных")
-        for col, report in outliers.items():
-            if report['n_outliers'] > 0:
-                st.write(f"**{col}:** {report['n_outliers']} выбросов ({report['percentage']:.1f}%)")
+        if any(report['n_outliers'] > 0 for report in outliers.values()):
+            st.write("### Выбросы в данных")
+            for col, report in outliers.items():
+                if report['n_outliers'] > 0:
+                    st.write(f"**{col}:** {report['n_outliers']} выбросов ({report['percentage']:.1f}%)")
 
         strategy = st.selectbox("Стратегия обработки", ["auto", "fill_median", "fill_mean", "interpolate", "drop_rows"])
 
@@ -942,7 +994,8 @@ if st.session_state.analysis_completed:
                             df_new, new_col = build_composite_score(
                                 current_df,
                                 active_weights,
-                                score_name=score_name
+                                score_name=score_name,
+                                assign_id=True
                             )
 
                             st.success(f"✅ Создана оценка **{new_col}**")
@@ -967,6 +1020,95 @@ if st.session_state.analysis_completed:
         with col2:
             if st.button("Сбросить все веса"):
                 st.rerun()
+
+    with tab6:
+        st.subheader("🔗 Объединение признаков и создание связей")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            numerical_cols = st.multiselect(
+                "Числовые признаки для комбинаций",
+                options=[col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])],
+                default=[]
+            )
+
+        with col2:
+            text_cols = st.multiselect(
+                "Текстовые признаки",
+                options=[col for col in df.columns if df[col].dtype == 'object'],
+                default=[]
+            )
+
+        max_pairs = st.slider("Максимальное количество новых признаков", 5, 30, 15)
+
+        if st.button("Создать комбинации признаков", type="primary"):
+            with st.spinner("Генерация новых признаков..."):
+                from ml_core.features import create_feature_combinations
+
+                df_new = create_feature_combinations(
+                    df,
+                    numerical_cols=numerical_cols,
+                    text_cols=text_cols,
+                    max_pairs=max_pairs
+                )
+
+                st.success(f"Создано {len(df_new.columns) - len(df.columns)} новых признаков")
+                st.dataframe(df_new.head())
+
+                # Обновляем данные в session_state
+                st.session_state.df = df_new
+    with tab7:
+        st.subheader("🔍 Выделение подмножества респондентов")
+
+        if 'df' not in st.session_state or st.session_state.df is None:
+            st.warning("Сначала загрузите данные и выполните анализ")
+        else:
+            df = st.session_state.df
+            method = st.radio(
+                "Способ выбора подмножества",
+                ["Произвольная выборка", "По условию (query)", "По кластеру"]
+            )
+            if method == "Произвольная выборка":
+                n_samples = st.slider("Количество респондентов",
+                                      min_value=10,
+                                      max_value=len(df),
+                                      value=min(100, len(df)))
+
+                if st.button("Выделить случайную выборку", type="primary"):
+                    with st.spinner("Выполняется выборка..."):
+                        subset = analyzer.select_subset(df, n_samples=n_samples)
+                        st.success(f"Выбрано {len(subset)} респондентов")
+                        st.dataframe(subset)
+
+            elif method == "По условию (query)":
+                condition = st.text_input("Условие (pandas query)",
+                                          placeholder="avg_grade < 3.0 and stress_level > 7")
+                if st.button("Применить фильтр", type="primary"):
+                    if not condition:
+                        st.error("Введите условие фильтрации")
+                    else:
+                        with st.spinner("Применяем фильтр..."):
+                            try:
+                                subset = analyzer.select_subset(df, condition=condition)
+                                st.success(f"Выбрано {len(subset)} респондентов")
+                                st.dataframe(subset)
+                            except Exception as e:
+                                st.error(f"Ошибка в условии: {e}")
+
+            elif method == "По кластеру":
+                if 'cluster' not in df.columns:
+                    st.warning("Сначала выполните кластеризацию студентов (в основном анализе)")
+                else:
+                    cluster_id = st.selectbox(
+                        "Выберите номер кластера",
+                        sorted(df['cluster'].unique())
+                    )
+                    if st.button("Показать кластер", type="primary"):
+                        with st.spinner("Загрузка кластера..."):
+                            subset = analyzer.select_subset(df, by_cluster=cluster_id)
+                            st.success(f"Кластер {cluster_id} — {len(subset)} студентов")
+                            st.dataframe(subset)
     # SHAP объяснения
     st.subheader("💡 Объяснения предсказаний")
     if st.session_state.explanations:
@@ -1038,64 +1180,97 @@ if st.session_state.analysis_completed and st.session_state.drift_detector:
     with tab1:
         st.write("### Проверка дрейфа на новых данных")
 
-        # Загрузка новых данных для проверки
+        # Загрузка новых данных для проверки дрейфа
         new_data_file = st.file_uploader(
             "Загрузите новые данные для проверки дрейфа",
-            type=['csv'],
+            type=['csv', 'xlsx', 'xls'],
+            help="Поддерживаются форматы: CSV, Excel (.xlsx, .xls)",
             key='drift_upload'
         )
+
         use_full_reference = st.checkbox("Использовать полный датасет как эталон", value=True)
 
         if new_data_file is not None:
-            new_df = pd.read_csv(new_data_file)
-            current_cols = st.session_state.selected_cols
+            file_extension = new_data_file.name.split('.')[-1].lower()
+            new_df = None
+            sheet_name = None
 
-            # Проверяем наличие нужных признаков
-            if all(col in new_df.columns for col in current_cols):
-                new_data = new_df[current_cols].fillna(new_df[current_cols].median())
+            try:
+                if file_extension == 'csv':
+                    new_df = pd.read_csv(new_data_file)
+                    st.info(f"Загружен CSV файл: {new_data_file.name}")
 
-                if st.button("🔍 Проверить дрейф"):
-                    with st.spinner("Анализ дрейфа данных..."):
+                else:  # Excel файл
+                    # Получаем список листов
+                    xl = pd.ExcelFile(new_data_file)
+                    sheet_names = xl.sheet_names
 
-                        if use_full_reference and st.session_state.X_train_sel is not None:
-                            full_data = pd.DataFrame(
-                                np.vstack([st.session_state.X_train_sel, st.session_state.X_test_sel]),
-                                columns=st.session_state.selected_cols
-                            )
-                            st.session_state.drift_detector.reference_data = full_data
-                        else:
-                            st.session_state.drift_detector.reference_data = st.session_state.reference_data
+                    if len(sheet_names) > 1:
+                        sheet_name = st.selectbox(
+                            "Выберите лист для проверки дрейфа",
+                            options=sheet_names,
+                            key="drift_sheet_selector"
+                        )
+                    else:
+                        sheet_name = sheet_names[0]
 
-                        drift_report = st.session_state.drift_detector.detect_drift(new_data)
-                        st.session_state.drift_report = drift_report
+                    # Загружаем выбранный лист
+                    new_df = pd.read_excel(new_data_file, sheet_name=sheet_name)
+                    st.info(f"Загружен Excel файл: {new_data_file.name} (лист: {sheet_name})")
 
-                        # Отображаем результаты
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Дрейфующих признаков", len(drift_report['drifted_features']))
-                        with col2:
-                            st.metric("Процент дрейфа", f"{drift_report['drift_percentage']:.1f}%")
-                        with col3:
-                            status = "🔴 Есть дрейф" if drift_report['overall_drift'] else "🟢 Нет дрейфа"
-                            st.metric("Статус", status)
+                # Проверяем наличие нужных признаков
+                current_cols = st.session_state.get('selected_cols', [])
 
-                        # Показываем предупреждение
-                        if drift_report['overall_drift']:
-                            st.warning(st.session_state.drift_detector.generate_alert_message(drift_report))
-                        else:
-                            st.success("✅ Данные стабильны, модель можно использовать")
+                if not current_cols:
+                    st.warning("Сначала выполните полный анализ, чтобы определить нужные признаки")
+                elif all(col in new_df.columns for col in current_cols):
+                    # Заполняем пропуски только по числовым колонкам
+                    new_data = new_df[current_cols].copy()
+                    numeric_cols = new_data.select_dtypes(include=[np.number]).columns
+                    new_data[numeric_cols] = new_data[numeric_cols].fillna(new_data[numeric_cols].median())
 
-                        # Детальный отчет
-                        with st.expander("Детальный отчет о дрейфе"):
-                            st.json(drift_report)
+                    if st.button("🔍 Проверить дрейф", type="primary", use_container_width=True):
+                        with st.spinner("Анализ дрейфа данных..."):
 
-                        # Сохраняем отчет
-                        report_path = st.session_state.drift_detector.save_report(drift_report)
-                        st.info(f"Отчет сохранен: {report_path}")
-            else:
-                missing = set(current_cols) - set(new_df.columns)
-                st.error(f"В загруженных данных отсутствуют признаки: {missing}")
+                            if use_full_reference and st.session_state.get('X_train_sel') is not None:
+                                full_data = pd.DataFrame(
+                                    np.vstack([st.session_state.X_train_sel, st.session_state.X_test_sel]),
+                                    columns=st.session_state.selected_cols
+                                )
+                                st.session_state.drift_detector.reference_data = full_data
+                            else:
+                                st.session_state.drift_detector.reference_data = st.session_state.reference_data
 
+                            drift_report = st.session_state.drift_detector.detect_drift(new_data)
+                            st.session_state.drift_report = drift_report
+
+                            # Отображение результатов
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Дрейфующих признаков", len(drift_report.get('drifted_features', [])))
+                            with col2:
+                                st.metric("Процент дрейфа", f"{drift_report.get('drift_percentage', 0):.1f}%")
+                            with col3:
+                                status = "🔴 Есть дрейф" if drift_report.get('overall_drift') else "🟢 Нет дрейфа"
+                                st.metric("Статус", status)
+
+                            if drift_report.get('overall_drift'):
+                                st.warning(st.session_state.drift_detector.generate_alert_message(drift_report))
+                            else:
+                                st.success("✅ Данные стабильны, модель можно использовать")
+
+                            with st.expander("Детальный отчет о дрейфе"):
+                                st.json(drift_report)
+
+                            report_path = st.session_state.drift_detector.save_report(drift_report)
+                            st.info(f"Отчет сохранён: {report_path}")
+
+                else:
+                    missing = set(current_cols) - set(new_df.columns)
+                    st.error(f"В загруженных данных отсутствуют необходимые признаки: {missing}")
+
+            except Exception as e:
+                st.error(f"Ошибка при чтении файла: {str(e)}")
     with tab2:
         st.write("### История метрик модели")
 
@@ -1115,7 +1290,6 @@ if st.session_state.analysis_completed and st.session_state.drift_detector:
                 st.plotly_chart(fig_history)
         else:
             st.info("История метрик пока пуста")
-
     with tab3:
         st.write("### Настройки мониторинга")
 

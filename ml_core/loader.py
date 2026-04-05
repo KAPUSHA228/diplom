@@ -6,52 +6,56 @@ import pandas as pd
 import numpy as np
 
 SHEET_TYPE_PATTERNS = {
-    'williams': {
-        'keywords': ['Любознательность', 'Воображение', 'Сложность', 'Склонность к рискy', 'Сумма'],
-        'min_matches': 3
+    'category1_numeric': {  # Вильямс, Шварц, Триандис, соц14
+        'keywords': [
+            'Любознательность', 'Воображение', 'Сложность', 'Склонность к рискy', 'Сумма',
+            'Безопасность', 'Конформность', 'Традиция', 'Самостоятельность', 'Риск–новизна',
+            'Гедонизм', 'Достижение', 'Власть–богатство', 'Благожелательность', 'Универсализм',
+            'Пол', 'Возраст', 'Курс', 'ВУЗ', 'Направление подготовки'
+        ],
+        'min_matches': 3,
+        'group': 'numeric'
     },
-    'schwartz': {
-        'keywords': ['Безопасность', 'Конформность', 'Традиция', 'Самостоятельность', 'Риск–новизна',
-                     'Гедонизм', 'Достижение', 'Власть–богатство', 'Благожелательность', 'Универсализм'],
-        'min_matches': 5
+    'category2_mednik': {
+        'keywords': ['случайная;', 'вечерняя;', 'обратно;', 'далеко;', 'народная;'],
+        'min_matches': 3,
+        'group': 'skip'
     },
-    'demographics': {
-        'keywords': ['Пол', 'Возраст', 'Курс', 'ВУЗ', 'Направление подготовки', 'user', 'user_id'],
-        'min_matches': 3
+    'category3_single_choice': {
+        'keywords': [
+            'Мне нравится работать в команде', 'организаторские способности', 'дисциплинированный', 'Оптимизм',
+            'Мне нравится что-то делать собственными руками', 'учиться чему-то новому',
+            'социальных сетях', 'тематический блог', 'зарабатываю в Интернете',
+            'Научно-исследовательские проекты', 'Спортивные соревнования', 'Волонтерская деятельность',
+            'КАК ВЫ УЧИТЕСЬ', 'СОБИРАЕТЕСЬ ЛИ ВЫ РАБОТАТЬ', 'В КАКОЙ СФЕРЕ ВЫ ХОТЕЛИ БЫ РАБОТАТЬ'
+        ],
+        'min_matches': 2,
+        'group': 'single_choice'
     },
-    'personality': {
-        'keywords': ['Мне нравится работать в команде', 'У меня хорошие организаторские способности',
-                     'Я – дисциплинированный человек', 'Оптимизм меня никогда не покидает'],
-        'min_matches': 2
-    },
-    'interests': {
-        'keywords': ['Мне нравится что-то делать собственными руками', 'Мне нравится учиться чему-то новому',
-                     'Я умею программировать'],
-        'min_matches': 2
-    },
-    'digital': {
-        'keywords': ['Я размещаю информацию о себе в социальных сетях', 'Я веду собственный тематический блог',
-                     'Я зарабатываю деньги в Интернете'],
-        'min_matches': 2
-    },
-    'activities': {
-        'keywords': ['Научно-исследовательские проекты', 'Спортивные соревнования', 'Волонтерская деятельность',
-                     'Творческие мероприятия'],
-        'min_matches': 2
-    },
-    'attitudes': {
-        'keywords': ['Любую идею можно довести до конкретного результата', 'Администрация вуза должна материально'],
-        'min_matches': 2
-    },
-    'grades': {
-        'keywords': ['КАК ВЫ УЧИТЕСЬ', 'УСПЕХ', 'сессия'],
-        'min_matches': 1
-    },
-    'career': {
-        'keywords': ['СОБИРАЕТЕСЬ ЛИ ВЫ РАБОТАТЬ', 'В КАКОЙ СФЕРЕ ВЫ ХОТЕЛИ БЫ РАБОТАТЬ'],
-        'min_matches': 1
+    'category4_multiple_choice': {
+        'keywords': ['Отметьте соответствующие варианты', 'Выберите 7 – 10 самых значимых'],
+        'min_matches': 1,
+        'group': 'multiple_choice'
     }
 }
+
+
+def detect_sheet_group(columns):
+    """
+    Определяет группу листа по содержимому колонок (4 категории).
+    """
+    cols_lower = [str(col).strip().lower() for col in columns if not str(col).startswith('Unnamed')]
+
+    best_group = 'unknown'
+    best_score = 0
+
+    for key, pattern in SHEET_TYPE_PATTERNS.items():
+        matched = sum(1 for kw in pattern['keywords'] if any(kw.lower() in col for col in cols_lower))
+        if matched >= pattern['min_matches'] and matched > best_score:
+            best_score = matched
+            best_group = pattern['group']
+
+    return best_group
 
 
 def detect_sheet_type_by_columns(columns, sheet_name=None):
@@ -114,83 +118,58 @@ def detect_sheet_type(sheet_name: str) -> str:
     return 'unknown'
 
 
-def preprocess_sheet(df: pd.DataFrame, sheet_type: str) -> tuple:
+def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None) -> tuple:
     """
-    Предобработка в зависимости от типа листа.
-    Возвращает (DataFrame, сообщение)
+    Предобработка в зависимости от группы листа (4 категории).
     """
     df = df.copy()
-    message = f"Обработан лист типа '{sheet_type}'"
+    message = f"Лист '{sheet_name}' → группа: {sheet_group}"
 
-    # Удаляем пустые строки и колонки
-    df = df.dropna(how='all')
-    df = df.dropna(axis=1, how='all')
+    # Базовая очистка
+    df = df.dropna(how='all').dropna(axis=1, how='all')
 
-    # Ищем ключевую колонку
-    if 'user' in df.columns:
-        user_col = 'user'
-    elif 'user_id' in df.columns:
-        user_col = 'user_id'
-    elif 'VK_id' in df.columns:
-        user_col = 'VK_id'
-    else:
-        # Если нет ключа, создаем
+    # Поиск user_col
+    user_col = next((col for col in ['user', 'user_id', 'VK_id', 'VK', 'student_id'] if col in df.columns), None)
+    if not user_col:
         df['user_id'] = range(len(df))
         user_col = 'user_id'
-        message += " (создан искусственный user_id)"
 
-    # В зависимости от типа листа
-    if sheet_type == 'williams':
-        # Тест креативности
-        target_cols = ['Любознательность', 'Воображение', 'Сложность', 'Склонность к рискy', 'Сумма']
-        for col in target_cols:
-            if col in df.columns:
+    # Обработка по группе
+    if sheet_group == 'numeric':
+        for col in df.columns:
+            if col not in [user_col, 'дата', 'Дата']:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    elif sheet_type == 'schwartz':
-        # Ценности — Likert шкалы
+    elif sheet_group == 'single_choice':
         for col in df.columns:
-            if col not in [user_col, 'VK', 'VK_id', 'дата']:
+            if col not in [user_col, 'дата', 'Дата']:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    elif sheet_type == 'grades':
-        # Успеваемость — создаем целевую переменную
-        for col in df.columns:
-            if 'учитесь' in col.lower() or 'сесси' in col.lower():
-                grade_map = {'отлично': 2, 'хорошо': 1, 'удовлетворительно': 0}
-                df['target'] = df[col].map(grade_map)
-                message += " (создана целевая переменная 'target')"
+    elif sheet_group == 'multiple_choice':
+        text_cols = df.select_dtypes(include=['object']).columns.tolist()
+        for col in text_cols:
+            if col not in [user_col, 'дата', 'Дата']:
+                prefix = f"{sheet_name.replace(' ', '_')}_" if sheet_name else ""
+                df = process_multiple_choice_column(df, col, prefix=prefix)
+        message += " (multiple choice → one-hot encoding)"
 
-    elif sheet_type in ['personality', 'interests', 'digital', 'activities', 'attitudes', 'career']:
-        # Личностные опросы — Likert шкалы
-        for col in df.columns:
-            if col not in [user_col, 'дата']:
-                # Пробуем преобразовать в числа
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+    elif sheet_group == 'skip':
+        message += " → пропущен"
+        return pd.DataFrame(), message
 
-    # Заполняем пропуски
+    # Заполнение пропусков
     numeric_cols = df.select_dtypes(include=[np.number]).columns
-    df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
+    if len(numeric_cols) > 0:
+        df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
 
-    # Удаляем колонки с датами
-    for col in df.columns:
-        if 'дата' in col.lower() or 'date' in col.lower():
+    # Удаление дат
+    for col in list(df.columns):
+        if 'дата' in str(col).lower() or 'date' in str(col).lower():
             df = df.drop(columns=[col])
 
-    # Удаляем дублирующиеся колонки
     df = df.loc[:, ~df.columns.duplicated()]
 
     return df, message
-
-
-def load_sheet(file_path: str, sheet_name: str) -> tuple:
-    """
-    Загружает и обрабатывает один лист.
-    """
-    df = pd.read_excel(file_path, sheet_name=sheet_name)
-    sheet_type = detect_sheet_type(sheet_name, df)
-    df_processed, msg = preprocess_sheet(df, sheet_type)
-    return df_processed, sheet_type, msg
 
 
 def load_excel_sheet(file_path: str, sheet_name: str) -> tuple:
@@ -209,6 +188,49 @@ def get_sheet_names(file_path: str) -> list:
     xl = pd.ExcelFile(file_path)
     return xl.sheet_names
 
+def process_multiple_choice_column(df: pd.DataFrame, col: str, prefix: str = "") -> pd.DataFrame:
+    """
+    Обрабатывает колонку с множественным выбором и превращает её в one-hot encoding.
+    """
+    if col not in df.columns:
+        return df
+
+    # Копируем датафрейм
+    df = df.copy()
+
+    # Разделители, которые могут встречаться
+    separators = [', ', '; ', ',', ';', ' | ']
+
+    # Функция разбиения
+    def split_choices(text):
+        if pd.isna(text):
+            return []
+        text = str(text).strip()
+        for sep in separators:
+            if sep in text:
+                return [x.strip() for x in text.split(sep) if x.strip()]
+        return [text] if text else []
+
+    # Получаем все уникальные варианты
+    all_choices = set()
+    for val in df[col].dropna():
+        all_choices.update(split_choices(val))
+
+    all_choices = sorted(all_choices)
+
+    if not all_choices:
+        return df
+
+    # Создаём one-hot колонки
+    for choice in all_choices:
+        clean_choice = choice.replace(" ", "_").replace("-", "_").replace("–", "_")
+        new_col_name = f"{prefix}{clean_choice}" if prefix else clean_choice
+        df[new_col_name] = df[col].apply(lambda x: 1 if choice in split_choices(x) else 0)
+
+    # Удаляем исходную колонку
+    df = df.drop(columns=[col])
+
+    return df
 
 def preprocess_excel_data(file_path: str) -> tuple:
     """
@@ -234,62 +256,39 @@ def preprocess_excel_data(file_path: str) -> tuple:
         message_parts = []
 
         for sheet_name in sheet_names:
-            # Сначала читаем только заголовки для определения типа
             df_headers = pd.read_excel(file_path, sheet_name=sheet_name, nrows=0)
-            sheet_type = detect_sheet_type_by_columns(df_headers.columns, sheet_name)
+            sheet_group = detect_sheet_group(df_headers.columns, sheet_name)
 
-            # Теперь читаем весь лист
             df_sheet = pd.read_excel(file_path, sheet_name=sheet_name)
-            df_processed, msg = preprocess_sheet(df_sheet, sheet_type)
+            df_processed, msg = preprocess_sheet(df_sheet, sheet_group, sheet_name)
+
             message_parts.append(f"{sheet_name}: {msg}")
 
-            # Обрабатываем
-            df_processed, msg = preprocess_sheet(df_sheet, sheet_type)
-            message_parts.append(f"{sheet_name}: {msg}")
+            if not df_processed.empty:
+                df_processed['_source_sheet'] = sheet_name
+                df_processed['_sheet_type'] = sheet_group
+                all_dfs.append(df_processed)
 
-            # Добавляем информацию о листе
-            df_processed['_source_sheet'] = sheet_name
-            df_processed['_sheet_type'] = sheet_type
-
-            all_dfs.append(df_processed)
-
-        # Объединяем все листы по user_id
         if all_dfs:
-            # Начинаем с первого листа
             result_df = all_dfs[0]
-
-            # Постепенно мерджим остальные
             for i, df_to_merge in enumerate(all_dfs[1:], 1):
-                # Определяем колонку для объединения
-                user_col = None
-                for col in ['user', 'user_id', 'VK_id']:
-                    if col in result_df.columns and col in df_to_merge.columns:
-                        user_col = col
-                        break
-
+                user_col = next((col for col in ['user', 'user_id', 'VK_id', 'VK']
+                                 if col in result_df.columns and col in df_to_merge.columns), None)
                 if user_col:
-                    # Мержим по user_id
-                    result_df = result_df.merge(
-                        df_to_merge,
-                        on=user_col,
-                        how='outer',
-                        suffixes=('', f'_{sheet_names[i]}')
-                    )
+                    result_df = result_df.merge(df_to_merge, on=user_col, how='outer',
+                                                suffixes=('', f'_{sheet_names[i]}'))
                 else:
-                    # Если нет общего ключа, просто добавляем
                     result_df = pd.concat([result_df, df_to_merge], axis=1)
 
-            # Удаляем временные колонки
+            # Удаляем технические колонки
             for col in ['_source_sheet', '_sheet_type']:
                 if col in result_df.columns:
                     result_df = result_df.drop(columns=[col])
 
-            message = f"Обработано {len(sheet_names)} листов: " + "; ".join(message_parts[:3]) + (
-                "..." if len(message_parts) > 3 else "")
-
+            message = f"Обработано {len(sheet_names)} листов. Пропущено: {len(sheet_names) - len(all_dfs)}"
             return result_df, message
-        else:
-            return None, "Нет данных для обработки"
+
+        return None, "Нет данных после обработки"
 
     except Exception as e:
         return None, f"Ошибка при обработке Excel: {str(e)}"
