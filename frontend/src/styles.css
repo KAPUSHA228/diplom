@@ -1,0 +1,91 @@
+body {
+    margin: 0;
+    font-family: Inter, Arial, sans-serif;
+    background: #f5f7fb;
+    color: #1d2433;
+  }
+  .container {
+    max-width: 960px;
+    margin: 24px auto;
+    padding: 0 16px;
+  }
+  .card {
+    background: white;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  button {
+    border: none;
+    border-radius: 8px;
+    background: #2b6fff;
+    color: white;
+    padding: 10px 14px;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .ok {
+    color: #0a8f35;
+  }
+  .error {
+    color: #b00020;
+  }
+  pre {
+    background: #0f172a;
+    color: #d6e3ff;
+    border-radius: 10px;
+    padding: 12px;
+    overflow: auto;
+  }
+  .muted {
+    color: #5f6b85;
+  }
+  .table-wrap {
+    overflow: auto;
+    border: 1px solid #e6eaf2;
+    border-radius: 8px;
+    margin-top: 10px;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 640px;
+  }
+  th, td {
+    border: 1px solid #e6eaf2;
+    padding: 6px 8px;
+    font-size: 13px;
+  }
+  th {
+    background: #f0f4fb;
+    position: sticky;
+    top: 0;
+  }
+  .matrix td {
+    text-align: center;
+  }
+  .heat-high {
+    background: #ff9e9e;
+  }
+  .heat-mid {
+    background: #ffd6d6;
+  }
+  .heat-neg-high {
+    background: #8dc5ff;
+  }
+  .heat-neg-mid {
+    background: #cde6ff;
+  }
+  .heat-low {
+    background: #f7f9fd;
+  }
+  
