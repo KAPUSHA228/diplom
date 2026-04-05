@@ -12,5 +12,9 @@ monitoring/__pycache__/
 api/__pycache__/
 api/routers/__pycache__/
 /monitoring/
+frontend/node_modules
+frontend/.env.example
+frontend/package-lock.json
+frontend/dist/*
 
 

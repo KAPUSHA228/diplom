@@ -301,7 +301,11 @@ def plot_confusion(model, X_test, y_test, name="model", output_path=None):
     return cm
 
 
-def plot_feature_importance(model, feature_names, name="model", output_path=None, top_n=10):
+def plot_feature_importance_png(model,
+                                feature_names,
+                                name="model",
+                                output_path=None,
+                                top_n=10):
     if not hasattr(model, "feature_importances_"):
         return
     importances = model.feature_importances_
@@ -316,4 +320,3 @@ def plot_feature_importance(model, feature_names, name="model", output_path=None
         output_path = f"fi_{name}.png"
     plt.savefig(output_path, dpi=200)
     plt.close()
-

@@ -178,7 +178,7 @@ def detect_negative_dynamics(df, student_id_col='student_id', time_col='semester
     }
 
 
-def forecast_grades(student_history, periods=2, method='linear'):
+def forecast_grades_chupep(student_history, periods=2, method='linear'):
     """
     Прогнозирование будущей успеваемости на основе истории.
 

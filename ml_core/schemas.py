@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Dict, Any
 import pandas as pd
 
@@ -36,8 +36,7 @@ class AnalysisRequest(BaseModel):
     data_source_id: Optional[str] = None  # ID записи в БД/системе хранения
     data_source_type: Optional[str] = Field(None, description="survey | lab | research | synthetic")
 
-    class Config:
-        arbitrary_types_allowed = True  # разрешаем pandas.DataFrame
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class CompositeScoreRequest(BaseModel):
@@ -89,8 +88,7 @@ class AnalysisResult(BaseModel):
     model_name: Optional[str] = None
     timestamp: Optional[str] = None
 
-    class Config:
-        arbitrary_types_allowed = True  # разрешаем Plotly фигуры и DataFrame
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 # class AnalysisResult(BaseModel):
 #     metrics: Dict[str, Any]
