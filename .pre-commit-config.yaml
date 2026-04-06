@@ -1,0 +1,42 @@
+# Pre-commit конфигурация
+# Установка: pip install pre-commit black ruff && pre-commit install
+# Ручной запуск: pre-commit run --all-files
+
+repos:
+  # === Форматирование ===
+  - repo: https://github.com/psf/black
+    rev: 24.3.0
+    hooks:
+      - id: black
+        language_version: python3
+        args: [--line-length=120]
+
+  # === Линтер ===
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.3.4
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+
+  # === Утилиты ===
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      # Убирает trailing whitespace
+      - id: trailing-whitespace
+      # Добавляет newline в конец файла
+      - id: end-of-file-fixer
+      # Проверка YAML
+      - id: check-yaml
+        exclude: ^(Dockerfile\.frontend)$  # heredoc в Dockerfile
+      # Проверка JSON
+      - id: check-json
+      # Проверка TOML
+      - id: check-toml
+      # Не коммитить большие файлы (>500KB)
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      # Не коммитить merge-конфликты
+      - id: check-merge-conflict
+      # Проверка case-sensitive импортов
+      - id: check-case-conflict
