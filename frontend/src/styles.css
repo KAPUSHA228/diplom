@@ -3,6 +3,10 @@ body {
     font-family: Inter, Arial, sans-serif;
     background: #f5f7fb;
     color: #1d2433;
+    box-sizing: border-box;
+  }
+  *, *::before, *::after {
+    box-sizing: inherit;
   }
   .container {
     max-width: 960px;
@@ -88,4 +92,45 @@ body {
   .heat-low {
     background: #f7f9fd;
   }
-  
+
+  /* Табы */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .tabs button,
+  .tabs a {
+    border: none;
+    border-radius: 8px 8px 0 0;
+    background: #e6eaf2;
+    color: #5f6b85;
+    padding: 10px 16px;
+    cursor: pointer;
+    font-size: 14px;
+    text-decoration: none;
+    transition: background 0.15s, color 0.15s;
+  }
+  .tabs button:hover,
+  .tabs a:hover {
+    background: #d0d6e2;
+  }
+  .tabs button.active,
+  .tabs a.active {
+    background: #2b6fff;
+    color: white;
+  }
+  .tabs button:focus,
+  .tabs a:focus {
+    outline: 2px solid #2b6fff;
+    outline-offset: 2px;
+  }
+
+  /* Адаптивность */
+  @media (max-width: 600px) {
+    .container { padding: 0 8px; }
+    .row { flex-direction: column; }
+    .tabs { flex-direction: column; }
+    .tabs button { border-radius: 8px; }
+  }

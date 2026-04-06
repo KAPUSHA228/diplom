@@ -17,5 +17,5 @@ frontend/.env.example
 frontend/package-lock.json
 frontend/dist/*
 .env.example
-
-
+/.pre-commit-cache
+htmlcov/*
