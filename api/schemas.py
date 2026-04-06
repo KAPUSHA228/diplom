@@ -36,3 +36,32 @@ class AnalysisResponse(BaseModel):
     cluster_profiles: Dict[str, Any] = Field(default_factory=dict)
     explanations: List[Dict[str, Any]] = Field(default_factory=list)
     data: Optional[List[Dict[str, Any]]] = None   # обработанные данные, если нужно
+
+
+# ==================== Схемы для legacy-эндпоинтов (main.py) ====================
+
+class PredictRequest(BaseModel):
+    """Синхронное предсказание для одного студента"""
+    data: Dict[str, Any]   # признаки студента
+
+
+class PredictResponse(BaseModel):
+    """Ответ предсказания"""
+    prediction: int
+    probability: float
+
+
+class TaskStatus(BaseModel):
+    """Статус фоновой задачи (RQ)"""
+    task_id: str
+    status: str  # pending, in_progress, completed, failed
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    progress: Optional[int] = None
+    stage: Optional[str] = None
+
+
+class TrainResponse(BaseModel):
+    """Ответ при запуске обучения"""
+    task_id: str
+    status: str = "started"

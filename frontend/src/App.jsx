@@ -6,19 +6,8 @@ import {
     uploadForShap,
     uploadForTrain } from "./api";
 
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-<BrowserRouter>
-    <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/correlation" element={<Correlation />} />
-        <Route path="/models" element={<ModelTraining />} />
-        <Route path="/drift" element={<DriftMonitor />} />
-        <Route path="/experiments" element={<Experiments />} />
-        <Route path="/crosstab" element={<Crosstab />} />
-        <Route path="/timeseries" element={<TimeSeries />} />
-        <Route path="/composite" element={<CompositeScore />} />
-    </Routes>
-</BrowserRouter>
+// Роутер будет добавлен когда появится Shell-приложение
+// import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 function PollingTask({ taskId, title }) {
   const [task, setTask] = useState(null);

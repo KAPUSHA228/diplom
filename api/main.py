@@ -1,18 +1,31 @@
 import json
 import os
 import tempfile
+import sys
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from redis import Redis
-from rq import Queue
-from rq.job import Job
-
 from api.schemas import PredictRequest, PredictResponse, TaskStatus, TrainResponse
+from api.routers.endpoints import router as analyze_router
 from ml_core.analysis import correlation_analysis
-from workers.tasks import train_model_task, shap_task
 from ml_core.models import ModelTrainer
+
+# RQ не работает на Windows (требует fork).
+# На Linux/macOS импортируем, на Windows — заглушки.
+if sys.platform != "win32":
+    from redis import Redis
+    from rq import Queue
+    from rq.job import Job
+    from workers.tasks import train_model_task, shap_task
+    RQ_AVAILABLE = True
+else:
+    Redis = None
+    Queue = None
+    Job = None
+    train_model_task = None
+    shap_task = None
+    RQ_AVAILABLE = False
 
 app = FastAPI(
     title="ML Analytics Service",
@@ -27,6 +40,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Подключаем роутер АРМ исследователя (новый API)
+app.include_router(analyze_router)
 
 @app.get("/health")
 async def health():
@@ -88,10 +104,18 @@ async def correlation(file: UploadFile = File(...)):
     }
 
 
-# Подключение к Redis
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-redis_conn = Redis.from_url(REDIS_URL)
-queue = Queue(connection=redis_conn)
+# Подключение к Redis (только на Linux/macOS + если доступен)
+if RQ_AVAILABLE:
+    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    try:
+        redis_conn = Redis.from_url(REDIS_URL)
+        queue = Queue(connection=redis_conn)
+    except Exception:
+        redis_conn = None
+        queue = None
+else:
+    redis_conn = None
+    queue = None
 
 
 @app.post("/api/ml/train", response_model=TrainResponse)
@@ -100,6 +124,10 @@ async def train_model(file: UploadFile = File(...)):
     Запуск обучения модели в фоне.
     Возвращает task_id для отслеживания.
     """
+    if queue is None:
+        if not RQ_AVAILABLE:
+            raise HTTPException(501, "Async tasks not available on Windows. Use Docker or Linux for async endpoints.")
+        raise HTTPException(503, "Redis is not available")
     # Сохраняем загруженный файл временно
     with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp:
         content = await file.read()
@@ -124,6 +152,8 @@ async def get_train_status(task_id: str):
     """
     Получить статус задачи обучения
     """
+    if redis_conn is None:
+        raise HTTPException(503, "Redis is not available")
     try:
         job = Job.fetch(task_id, connection=redis_conn)
     except Exception:
@@ -186,6 +216,10 @@ async def generate_shap(file: UploadFile = File(...), model_id: str = "XGB"):
     """
     Запуск SHAP-объяснений в фоне.
     """
+    if queue is None:
+        if not RQ_AVAILABLE:
+            raise HTTPException(501, "Async tasks not available on Windows. Use Docker or Linux for async endpoints.")
+        raise HTTPException(503, "Redis is not available")
     with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp:
         content = await file.read()
         tmp.write(content)
