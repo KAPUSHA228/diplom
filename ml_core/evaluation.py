@@ -8,6 +8,7 @@ import plotly.express as px
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+from ml_core.config import config
 from xgboost import XGBClassifier
 from sklearn.metrics import (
     roc_auc_score,
@@ -27,32 +28,44 @@ from ml_core.error_handler import logger
 
 def calculate_metrics(y_true, y_pred, y_proba=None):
     """
-    Расчет всех метрик
+    Вычисляет метрики классификации: F1, Precision, Recall, ROC-AUC.
+
+    Args:
+        y_true: истинные метки
+        y_pred: предсказанные метки
+        y_proba: вероятности положительного класса (для ROC-AUC)
+
+    Returns:
+        dict: {'f1', 'precision', 'recall', 'roc_auc' (если y_proba есть)}
     """
     metrics = {
-        'f1': f1_score(y_true, y_pred),
-        'precision': precision_score(y_true, y_pred),
-        'recall': recall_score(y_true, y_pred)
+        "f1": f1_score(y_true, y_pred),
+        "precision": precision_score(y_true, y_pred),
+        "recall": recall_score(y_true, y_pred),
     }
 
     if y_proba is not None:
-        metrics['roc_auc'] = roc_auc_score(y_true, y_proba)
+        metrics["roc_auc"] = roc_auc_score(y_true, y_proba)
 
     return metrics
 
 
 def plot_roc_curves(models_dict, X_test, y_test):
     """
-    Построение ROC-кривых для нескольких моделей
+    Строит ROC-кривые для нескольких моделей (Plotly).
+
+    Args:
+        models_dict: dict {name: model} обученных моделей
+        X_test: тестовые признаки
+        y_test: истинные тестовые метки
+
+    Returns:
+        plotly.graph_objects.Figure: ROC-кривые всех моделей
     """
     fig = go.Figure()
 
     # Диагональная линия (случайная модель)
-    fig.add_trace(go.Scatter(
-        x=[0, 1], y=[0, 1],
-        mode='lines', name='Random',
-        line=dict(dash='dash', color='gray')
-    ))
+    fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", name="Random", line=dict(dash="dash", color="gray")))
 
     for name, model in models_dict.items():
         if hasattr(model, "predict_proba"):
@@ -60,16 +73,14 @@ def plot_roc_curves(models_dict, X_test, y_test):
             fpr, tpr, _ = roc_curve(y_test, y_proba)
             auc = roc_auc_score(y_test, y_proba)
 
-            fig.add_trace(go.Scatter(
-                x=fpr, y=tpr,
-                mode='lines', name=f'{name} (AUC={auc:.3f})'
-            ))
+            fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=f"{name} (AUC={auc:.3f})"))
 
     fig.update_layout(
-        title='ROC-кривые моделей',
-        xaxis_title='False Positive Rate',
-        yaxis_title='True Positive Rate',
-        width=600, height=500
+        title="ROC-кривые моделей",
+        xaxis_title="False Positive Rate",
+        yaxis_title="True Positive Rate",
+        width=600,
+        height=500,
     )
 
     return fig
@@ -77,7 +88,15 @@ def plot_roc_curves(models_dict, X_test, y_test):
 
 def plot_confusion_matrix(y_true, y_pred, model_name):
     """
-    Построение confusion matrix
+    Строит confusion matrix (Plotly).
+
+    Args:
+        y_true: истинные метки
+        y_pred: предсказанные метки
+        model_name: имя модели (для заголовка)
+
+    Returns:
+        plotly.graph_objects.Figure: confusion matrix
     """
     cm = confusion_matrix(y_true, y_pred)
 
@@ -86,8 +105,8 @@ def plot_confusion_matrix(y_true, y_pred, model_name):
         text_auto=True,
         aspect="auto",
         labels=dict(x="Predicted", y="True"),
-        title=f'Confusion Matrix: {model_name}',
-        color_continuous_scale='Blues'
+        title=f"Confusion Matrix: {model_name}",
+        color_continuous_scale="Blues",
     )
 
     return fig
@@ -95,7 +114,15 @@ def plot_confusion_matrix(y_true, y_pred, model_name):
 
 def plot_feature_importance(model, feature_names, top_n=10):
     """
-    Построение важности признаков
+    Строит bar chart важности признаков (Plotly).
+
+    Args:
+        model: обученная модель с feature_importances_ или coef_
+        feature_names: список имён признаков
+        top_n: сколько лучших признаков показать
+
+    Returns:
+        plotly.graph_objects.Figure: bar chart важности
     """
     if hasattr(model, "feature_importances_"):
         importances = model.feature_importances_
@@ -110,33 +137,45 @@ def plot_feature_importance(model, feature_names, top_n=10):
     fig = px.bar(
         x=importances[indices],
         y=[feature_names[i] for i in indices],
-        orientation='h',
-        title='Важность признаков',
-        labels={'x': 'Importance', 'y': ''}
+        orientation="h",
+        title="Важность признаков",
+        labels={"x": "Importance", "y": ""},
     )
 
     return fig
 
 
 def generate_shap_explanations(model, X: pd.DataFrame, feature_names: list, threshold: float = 0.5, top_n: int = 5):
-    """Единый обработчик SHAP с корректной поддержкой всех типов моделей"""
+    """
+    Генерирует SHAP-объяснения для первых 15 наблюдений.
+
+    Args:
+        model: обученная модель (XGBoost/RF/LogisticRegression)
+        X: данные для объяснения (DataFrame)
+        feature_names: список имён признаков
+        threshold: порог классификации для определения риска
+        top_n: число объяснений для возврата
+
+    Returns:
+        list[dict]: [{'student_index', 'risk_probability', 'risk_level', 'explanation'}]
+    """
     try:
         # Единый способ создания explainer
         if isinstance(model, (XGBClassifier, RandomForestClassifier)):
             explainer = shap.TreeExplainer(model)
         else:
-            explainer = shap.LinearExplainer(model, X) if hasattr(model, 'coef_') else shap.Explainer(model)
+            explainer = shap.LinearExplainer(model, X) if hasattr(model, "coef_") else shap.Explainer(model)
 
         shap_values = explainer.shap_values(X)
 
         # Приведение к единому формату (для класса 1)
-        if isinstance(shap_values, list) and len(shap_values) == 2:   # TreeExplainer для бинарной классификации
+        if isinstance(shap_values, list) and len(shap_values) == 2:  # TreeExplainer для бинарной классификации
             shap_values = shap_values[1]
-        elif hasattr(shap_values, 'shape') and len(shap_values.shape) == 3:
+        elif hasattr(shap_values, "shape") and len(shap_values.shape) == 3:
             shap_values = shap_values[:, :, 1] if shap_values.shape[2] > 1 else shap_values[:, :, 0]
 
         explanations = []
-        for i in range(min(len(X), 15)):   # ограничиваем для производительности
+        for i in range(min(len(X), 15)):  # ограничиваем для производительности
             risk_prob = float(model.predict_proba(X.iloc[[i]])[0, 1])
 
             # shap_values может быть ndarray
@@ -146,19 +185,19 @@ def generate_shap_explanations(model, X: pd.DataFrame, feature_names: list, thre
             feature_effects.sort(key=lambda x: abs(x[1]), reverse=True)
 
             explanation = {
-                'student_index': i,
-                'risk_probability': risk_prob,
-                'risk_level': 'high' if risk_prob > threshold else 'low',
-                'top_features': [
+                "student_index": i,
+                "risk_probability": risk_prob,
+                "risk_level": "high" if risk_prob > threshold else "low",
+                "top_features": [
                     {
-                        'feature': feat,
-                        'shap_value': float(val),
-                        'effect': 'увеличивает риск' if val > 0 else 'снижает риск'
+                        "feature": feat,
+                        "shap_value": float(val),
+                        "effect": "увеличивает риск" if val > 0 else "снижает риск",
                     }
                     for feat, val in feature_effects[:top_n]
-                ]
+                ],
             }
-            explanation['explanation'] = generate_text_explanation(explanation)
+            explanation["explanation"] = generate_text_explanation(explanation)
             explanations.append(explanation)
 
         return explanations
@@ -167,15 +206,22 @@ def generate_shap_explanations(model, X: pd.DataFrame, feature_names: list, thre
         logger.error(f"SHAP generation failed: {str(e)}", exc_info=True)
         return []
 
+
 def generate_text_explanation(exp):
     """
-    Генерация человеко-читаемого объяснения
+    Преобразует dict SHAP-объяснения в читаемый текст.
+
+    Args:
+        exp: dict с ключами 'risk_probability', 'risk_level', 'factors'
+
+    Returns:
+        str: текстовое объяснение
     """
     text = f"Риск отчисления: {exp['risk_probability']:.1%} ({exp['risk_level']})\n\n"
     text += "Основные факторы:\n"
 
-    for feat in exp['top_features']:
-        arrow = "↑" if feat['effect'] == 'увеличивает риск' else "↓"
+    for feat in exp["top_features"]:
+        arrow = "↑" if feat["effect"] == "увеличивает риск" else "↓"
         text += f"• {feat['feature']}: {arrow} ({feat['shap_value']:.3f})\n"
 
     return text
@@ -183,6 +229,16 @@ def generate_text_explanation(exp):
 
 # ---- SHAP анализ ----
 def explain_model_with_shap(model, X_explain):
+    """
+    Генерирует summary plot SHAP и текстовые объяснения.
+
+    Args:
+        model: обученная модель (XGBoost/RF/LogisticRegression)
+        X_explain: данные для объяснения (DataFrame)
+
+    Returns:
+        list[str]: текстовые объяснения для каждого наблюдения
+    """
     explainer = shap.Explainer(model)
     shap_values = explainer(X_explain)
     shap.summary_plot(shap_values, X_explain, show=False)
@@ -203,8 +259,17 @@ def explain_model_with_shap(model, X_explain):
 
 def generate_detailed_explanation(model, X_explain, student_idx, feature_names, threshold=0.5):
     """
-    Генерирует детальное текстовое объяснение для конкретного студента.
-    Включает вероятность риска, топ-3 фактора и рекомендации.
+    Генерирует детальное объяснение для конкретного студента.
+
+    Args:
+        model: обученная модель
+        X_explain: DataFrame с данными студентов
+        student_idx: индекс студента в DataFrame
+        feature_names: список имён признаков
+        threshold: порог классификации риска
+
+    Returns:
+        str: детальное текстовое объяснение с рекомендациями
     """
     explainer = shap.Explainer(model)
     shap_values = explainer(X_explain.iloc[[student_idx]])
@@ -235,7 +300,7 @@ def generate_detailed_explanation(model, X_explain, student_idx, feature_names, 
     # Формируем объяснение
     explanation_parts = [
         f"Вероятность академического риска: {proba:.1%} (уровень: {risk_level})",
-        "\nОсновные факторы риска:"
+        "\nОсновные факторы риска:",
     ]
 
     for feat, shap_val in zip(top_features, top_shap_vals):
@@ -246,11 +311,11 @@ def generate_detailed_explanation(model, X_explain, student_idx, feature_names, 
     recommendations = []
     for feat, shap_val in zip(top_features, top_shap_vals):
         if shap_val > 0:  # Фактор увеличивает риск
-            if 'trend' in feat.lower() or 'grade' in feat.lower():
+            if "trend" in feat.lower() or "grade" in feat.lower():
                 recommendations.append("Рекомендуется обратить внимание на динамику успеваемости")
-            elif 'attendance' in feat.lower():
+            elif "attendance" in feat.lower():
                 recommendations.append("Необходимо улучшить посещаемость занятий")
-            elif 'stress' in feat.lower() or 'cognitive' in feat.lower():
+            elif "stress" in feat.lower() or "cognitive" in feat.lower():
                 recommendations.append("Требуется снижение когнитивной нагрузки и уровня стресса")
 
     if recommendations:
@@ -262,33 +327,52 @@ def generate_detailed_explanation(model, X_explain, student_idx, feature_names, 
 
 def generate_batch_explanations(model, X_explain, feature_names, threshold=0.5, top_n=10):
     """
-    Генерирует объяснения для топ-N студентов с наибольшим риском.
-    Возвращает список словарей с детальными объяснениями.
+    Генерирует объяснения для top-N студентов с наибольшим риском.
+
+    Args:
+        model: обученная модель
+        X_explain: DataFrame с данными студентов
+        feature_names: список имён признаков
+        threshold: порог классификации риска
+        top_n: число студентов с наибольшим риском
+
+    Returns:
+        list[dict]: список объяснений для каждого студента
     """
     probas = model.predict_proba(X_explain)[:, 1]
     top_risk_indices = np.argsort(probas)[-top_n:][::-1]
 
     explanations_list = []
     for idx in top_risk_indices:
-        explanation = generate_detailed_explanation(
-            model, X_explain, idx, feature_names, threshold
+        explanation = generate_detailed_explanation(model, X_explain, idx, feature_names, threshold)
+        explanations_list.append(
+            {"student_index": int(idx), "risk_probability": float(probas[idx]), "explanation": explanation}
         )
-        explanations_list.append({
-            'student_index': int(idx),
-            'risk_probability': float(probas[idx]),
-            'explanation': explanation
-        })
 
     return explanations_list
 
 
 # ---- Визуализация метрик и важности признаков ----
 
+
 def plot_confusion(model, X_test, y_test, name="model", output_path=None):
+    """
+    Строит confusion matrix через matplotlib и сохраняет в PNG.
+
+    Args:
+        model: обученная модель
+        X_test: тестовые признаки
+        y_test: истинные метки
+        name: имя модели (для имени файла)
+        output_path: путь сохранения (по умолчанию: logs/cm_{name}.png)
+
+    Returns:
+        ndarray: матрица ошибок
+    """
     preds = model.predict(X_test)
     cm = confusion_matrix(y_test, preds)
     if output_path is None:
-        output_path = f"cm_{name}.png"
+        output_path = config.LOGS_DIR / f"cm_{name}.png"
     if sns is not None:
         plt.figure(figsize=(4, 4))
         sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
@@ -301,11 +385,20 @@ def plot_confusion(model, X_test, y_test, name="model", output_path=None):
     return cm
 
 
-def plot_feature_importance_png(model,
-                                feature_names,
-                                name="model",
-                                output_path=None,
-                                top_n=10):
+def plot_feature_importance_png(model, feature_names, name="model", output_path=None, top_n=10):
+    """
+    Строит горизонтальную bar chart важности признаков (matplotlib).
+
+    Args:
+        model: модель с attribute feature_importances_ (RF/XGB)
+        feature_names: список имён признаков
+        name: имя модели (для имени файла)
+        output_path: путь сохранения (по умолчанию: logs/fi_{name}.png)
+        top_n: сколько лучших признаков показать
+
+    Returns:
+        None (сохраняет PNG)
+    """
     if not hasattr(model, "feature_importances_"):
         return
     importances = model.feature_importances_
@@ -317,6 +410,6 @@ def plot_feature_importance_png(model,
     plt.title(f"Feature importance: {name}")
     plt.tight_layout()
     if output_path is None:
-        output_path = f"fi_{name}.png"
+        output_path = config.LOGS_DIR / f"fi_{name}.png"
     plt.savefig(output_path, dpi=200)
     plt.close()

@@ -1,46 +1,26 @@
 """
 Автоматическая обработка пропусков (null) в данных
 """
-import pandas as pd
+
 import numpy as np
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import LinearRegression
-from typing import Dict, Any
 
 
-def handle_missing_values(df, strategy='auto', threshold=30):
+def handle_missing_values(df, strategy="auto", threshold=30):
     """
-    Многоуровневая обработка пропусков.
+    Многоуровневая обработка пропусков с автоматическим или ручным выбором стратегии.
 
-    Parameters:
-    -----------
-    df : pd.DataFrame
-        Исходные данные
-    strategy : str
-        'auto' — автоматический выбор стратегии
-        'drop_rows' — удалить строки с пропусками
-        'drop_columns' — удалить столбцы с пропусками
-        'fill_mean' — заполнить средним
-        'fill_median' — заполнить медианой
-        'fill_mode' — заполнить модой
-        'interpolate' — интерполяция
-    threshold : float
-        Порог пропусков для удаления столбца (%)
+    Args:
+        df: исходный DataFrame
+        strategy: стратегия ('auto', 'drop_rows', 'drop_columns', 'fill_mean',
+                  'fill_median', 'fill_mode', 'interpolate')
+        threshold: процент пропусков для удаления столбца при 'auto' (по умолчанию 30%)
 
     Returns:
-    --------
-    df_clean : pd.DataFrame
-        Данные после обработки
-    report : dict
-        Отчет о выполненной обработке
+        (df_clean, report): обработанный DataFrame и dict-отчёт о действиях
     """
     df = df.copy()
     df_clean = df.copy()
-    report = {
-        'original_shape': df.shape,
-        'missing_before': df.isna().sum().sum(),
-        'actions': []
-    }
+    report = {"original_shape": df.shape, "missing_before": df.isna().sum().sum(), "actions": []}
 
     for col in df.columns:
         null_pct = df[col].isna().mean() * 100
@@ -50,75 +30,68 @@ def handle_missing_values(df, strategy='auto', threshold=30):
 
         col_strategy = strategy
 
-        if strategy == 'auto':
+        if strategy == "auto":
             if null_pct > threshold:
-                col_strategy = 'drop_column'
+                col_strategy = "drop_column"
             elif null_pct > 10:
-                col_strategy = 'fill_median' if df[col].dtype in ['int64', 'float64'] else 'fill_mode'
+                col_strategy = "fill_median" if df[col].dtype in ["int64", "float64"] else "fill_mode"
             else:
-                col_strategy = 'interpolate' if df[col].dtype in ['int64', 'float64'] else 'fill_mode'
+                col_strategy = "interpolate" if df[col].dtype in ["int64", "float64"] else "fill_mode"
 
-        action = {'column': col, 'null_pct': null_pct, 'strategy': col_strategy}
+        action = {"column": col, "null_pct": null_pct, "strategy": col_strategy}
 
-        if col_strategy == 'drop_column':
+        if col_strategy == "drop_column":
             df_clean = df_clean.drop(columns=[col])
-            action['message'] = f'Удален столбец (пропусков: {null_pct:.1f}%)'
+            action["message"] = f"Удален столбец (пропусков: {null_pct:.1f}%)"
 
-        elif col_strategy == 'drop_rows':
+        elif col_strategy == "drop_rows":
             before = len(df_clean)
             df_clean = df_clean.dropna(subset=[col])
-            action['message'] = f'Удалено строк: {before - len(df_clean)}'
+            action["message"] = f"Удалено строк: {before - len(df_clean)}"
 
-        elif col_strategy == 'fill_mean':
+        elif col_strategy == "fill_mean":
             df_clean[col] = df_clean[col].fillna(df_clean[col].mean())
-            action['message'] = f'Заполнено средним ({df_clean[col].mean():.2f})'
+            action["message"] = f"Заполнено средним ({df_clean[col].mean():.2f})"
 
-        elif col_strategy == 'fill_median':
+        elif col_strategy == "fill_median":
             median = df_clean[col].median()
             df_clean[col] = df_clean[col].fillna(median)
-            action['message'] = f'Заполнено медианой ({median:.2f})'
+            action["message"] = f"Заполнено медианой ({median:.2f})"
 
-        elif col_strategy == 'fill_mode':
-            mode = df_clean[col].mode()[0] if not df_clean[col].mode().empty else 'unknown'
+        elif col_strategy == "fill_mode":
+            mode = df_clean[col].mode()[0] if not df_clean[col].mode().empty else "unknown"
             df_clean[col] = df_clean[col].fillna(mode)
-            action['message'] = f'Заполнено модой ({mode})'
+            action["message"] = f"Заполнено модой ({mode})"
 
-        elif col_strategy == 'interpolate':
-            df_clean[col] = df_clean[col].interpolate(method='linear')
-            action['message'] = 'Линейная интерполяция'
+        elif col_strategy == "interpolate":
+            df_clean[col] = df_clean[col].interpolate(method="linear")
+            action["message"] = "Линейная интерполяция"
 
-        elif col_strategy == 'flag':
-            df_clean[f'{col}_missing'] = df_clean[col].isna().astype(int)
+        elif col_strategy == "flag":
+            df_clean[f"{col}_missing"] = df_clean[col].isna().astype(int)
             df_clean[col] = df_clean[col].fillna(df_clean[col].median())
-            action['message'] = 'Добавлен флаг пропуска'
+            action["message"] = "Добавлен флаг пропуска"
 
-        report['actions'].append(action)
+        report["actions"].append(action)
 
-    report['missing_after'] = df_clean.isna().sum().sum()
-    report['final_shape'] = df_clean.shape
+    report["missing_after"] = df_clean.isna().sum().sum()
+    report["final_shape"] = df_clean.shape
 
     return df_clean, report
 
 
-def detect_outliers(df, columns=None, method='iqr', threshold=1.5):
+def detect_outliers(df, columns=None, method="iqr", threshold=1.5):
     """
-    Обнаружение выбросов в данных.
+    Обнаружение выбросов методами IQR или Z-score.
 
-    Parameters:
-    -----------
-    df : pd.DataFrame
-    columns : list, optional
-        Список столбцов для проверки
-    method : str
-        'iqr' — межквартильный размах
-        'zscore' — Z-оценка
-    threshold : float
-        Порог для определения выброса
+    Args:
+        df: исходный DataFrame
+        columns: список колонок для проверки (если None — все числовые)
+        method: метод обнаружения ('iqr' или 'zscore')
+        threshold: множитель для IQR (по умолчанию 1.5) или Z-score (по умолчанию 3.0)
 
     Returns:
-    --------
-    outliers_report : dict
-        Отчет о выбросах
+        dict: {column_name: {'n_outliers', 'percentage', 'lower_bound', 'upper_bound', ...}}
     """
     df = df.copy()
 
@@ -133,7 +106,7 @@ def detect_outliers(df, columns=None, method='iqr', threshold=1.5):
 
         data = df[col].dropna()
 
-        if method == 'iqr':
+        if method == "iqr":
             q1 = data.quantile(0.25)
             q3 = data.quantile(0.75)
             iqr = q3 - q1
@@ -141,16 +114,16 @@ def detect_outliers(df, columns=None, method='iqr', threshold=1.5):
             upper = q3 + threshold * iqr
             outliers = data[(data < lower) | (data > upper)]
 
-        elif method == 'zscore':
+        elif method == "zscore":
             z = (data - data.mean()) / data.std()
             outliers = data[abs(z) > threshold]
 
         outliers_report[col] = {
-            'n_outliers': len(outliers),
-            'percentage': len(outliers) / len(data) * 100 if len(data) > 0 else 0,
-            'lower_bound': lower if method == 'iqr' else None,
-            'upper_bound': upper if method == 'iqr' else None,
-            'outlier_values': outliers.tolist()
+            "n_outliers": len(outliers),
+            "percentage": len(outliers) / len(data) * 100 if len(data) > 0 else 0,
+            "lower_bound": lower if method == "iqr" else None,
+            "upper_bound": upper if method == "iqr" else None,
+            "outlier_values": outliers.tolist(),
         }
 
     return outliers_report

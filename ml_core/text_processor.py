@@ -1,9 +1,18 @@
 import pandas as pd
-import numpy as np
 
 
 def extract_text_features(df: pd.DataFrame, text_column: str = "essay_text") -> pd.DataFrame:
-    """Простая обработка текста эссе → числовые признаки"""
+    """
+    Извлекает числовые признаки из текстового столбца (эссе).
+    Создаёт: {col}_length, {col}_word_count, {col}_complexity.
+
+    Args:
+        df: исходный DataFrame
+        text_column: имя текстового столбца
+
+    Returns:
+        pd.DataFrame: DataFrame с добавленными текстовыми признаками
+    """
     df = df.copy()
 
     if text_column not in df.columns:

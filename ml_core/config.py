@@ -33,7 +33,8 @@ class Config:
             self.ANALYSIS_DATA_DIR,
             self.ANALYSIS_DATA_DIR / "synthetic",
             self.ANALYSIS_DATA_DIR / "monitoring",
-            self.ANALYSIS_DATA_DIR / "processed"
+            self.ANALYSIS_DATA_DIR / "processed",
+            self.LOGS_DIR / "drift_reports",
         ]:
             directory.mkdir(parents=True, exist_ok=True)
 

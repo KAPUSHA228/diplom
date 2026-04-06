@@ -2,9 +2,10 @@
 Модуль для обнаружения дрейфа данных в ML-моделях
 Сравнивает текущие данные с эталонными (на которых обучалась модель)
 """
+
 import numpy as np
 import pandas as pd
-from scipy.stats import ks_2samp, chi2_contingency
+from scipy.stats import ks_2samp
 from typing import Dict, List, Optional
 import json
 from datetime import datetime
@@ -13,6 +14,8 @@ import logging
 import threading
 import time
 import plotly.graph_objects as go
+
+from ml_core.config import config
 
 
 class DriftMonitorThread:
@@ -52,11 +55,13 @@ class DataDriftDetector:
             print("Обнаружен дрейф! Нужно переобучать модель.")
     """
 
-    def __init__(self,
-                 reference_data: pd.DataFrame,
-                 model_metadata: Optional[Dict] = None,
-                 threshold: float = 0.05,
-                 model_name: str = "unknown_model"):
+    def __init__(
+        self,
+        reference_data: pd.DataFrame,
+        model_metadata: Optional[Dict] = None,
+        threshold: float = 0.05,
+        model_name: str = "unknown_model",
+    ):
         """
         Args:
             reference_data: Эталонные данные (на которых обучалась модель)
@@ -70,21 +75,21 @@ class DataDriftDetector:
         self.model_name = model_name
 
         # Определяем типы признаков
-        self.numerical_features = self.model_metadata.get('numerical_features',
-                                                          reference_data.select_dtypes(
-                                                              include=[np.number]).columns.tolist())
-        self.categorical_features = self.model_metadata.get('categorical_features',
-                                                            reference_data.select_dtypes(
-                                                                include=['object', 'category']).columns.tolist())
+        self.numerical_features = self.model_metadata.get(
+            "numerical_features", reference_data.select_dtypes(include=[np.number]).columns.tolist()
+        )
+        self.categorical_features = self.model_metadata.get(
+            "categorical_features", reference_data.select_dtypes(include=["object", "category"]).columns.tolist()
+        )
 
         # Вычисляем статистики по эталонным данным
         self.ref_stats = self._compute_statistics(reference_data)
 
         # Настройка логирования
-        self.logger = logging.getLogger('drift_detector')
+        self.logger = logging.getLogger("drift_detector")
         if not self.logger.handlers:
             handler = logging.StreamHandler()
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
             self.logger.setLevel(logging.INFO)
@@ -94,38 +99,34 @@ class DataDriftDetector:
         df = df.copy()
 
         stats = {
-            'numerical': {},
-            'categorical': {},
-            'general': {
-                'n_rows': len(df),
-                'n_columns': len(df.columns),
-                'timestamp': datetime.now().isoformat()
-            }
+            "numerical": {},
+            "categorical": {},
+            "general": {"n_rows": len(df), "n_columns": len(df.columns), "timestamp": datetime.now().isoformat()},
         }
 
         # Статистики для числовых признаков
         for feat in self.numerical_features:
             if feat in df.columns:
-                stats['numerical'][feat] = {
-                    'mean': float(df[feat].mean()),
-                    'std': float(df[feat].std()),
-                    'min': float(df[feat].min()),
-                    'max': float(df[feat].max()),
-                    'median': float(df[feat].median()),
-                    'q25': float(df[feat].quantile(0.25)),
-                    'q75': float(df[feat].quantile(0.75)),
-                    'missing_pct': float(df[feat].isna().mean() * 100)
+                stats["numerical"][feat] = {
+                    "mean": float(df[feat].mean()),
+                    "std": float(df[feat].std()),
+                    "min": float(df[feat].min()),
+                    "max": float(df[feat].max()),
+                    "median": float(df[feat].median()),
+                    "q25": float(df[feat].quantile(0.25)),
+                    "q75": float(df[feat].quantile(0.75)),
+                    "missing_pct": float(df[feat].isna().mean() * 100),
                 }
 
         # Статистики для категориальных признаков
         for feat in self.categorical_features:
             if feat in df.columns:
                 value_counts = df[feat].value_counts(normalize=True)
-                stats['categorical'][feat] = {
-                    'unique_values': int(df[feat].nunique()),
-                    'value_counts': {str(k): float(v) for k, v in value_counts.head(10).items()},
-                    'missing_pct': float(df[feat].isna().mean() * 100),
-                    'mode': str(df[feat].mode()[0]) if not df[feat].mode().empty else None
+                stats["categorical"][feat] = {
+                    "unique_values": int(df[feat].nunique()),
+                    "value_counts": {str(k): float(v) for k, v in value_counts.head(10).items()},
+                    "missing_pct": float(df[feat].isna().mean() * 100),
+                    "mode": str(df[feat].mode()[0]) if not df[feat].mode().empty else None,
                 }
 
         return stats
@@ -142,27 +143,24 @@ class DataDriftDetector:
         """
 
         drift_report = {
-            'timestamp': datetime.now().isoformat(),
-            'model_name': self.model_name,
-            'overall_drift': False,
-            'drift_percentage': 0.0,
-            'drifted_features': [],
-            'feature_reports': {},
-            'recommendations': [],
-            'data_quality': {}
+            "timestamp": datetime.now().isoformat(),
+            "model_name": self.model_name,
+            "overall_drift": False,
+            "drift_percentage": 0.0,
+            "drifted_features": [],
+            "feature_reports": {},
+            "recommendations": [],
+            "data_quality": {},
         }
 
         # Проверяем качество данных
-        drift_report['data_quality'] = self._check_data_quality(current_data)
+        drift_report["data_quality"] = self._check_data_quality(current_data)
 
         # Проверка числовых признаков (KS-тест)
         for feat in self.numerical_features:
             if feat not in current_data.columns:
-                drift_report['feature_reports'][feat] = {
-                    'error': 'Feature missing in current data',
-                    'drifted': True
-                }
-                drift_report['drifted_features'].append(feat)
+                drift_report["feature_reports"][feat] = {"error": "Feature missing in current data", "drifted": True}
+                drift_report["drifted_features"].append(feat)
                 continue
 
             ref_values = self.reference_data[feat].dropna()
@@ -179,20 +177,20 @@ class DataDriftDetector:
 
                 drifted = p_value < self.threshold
 
-                drift_report['feature_reports'][feat] = {
-                    'type': 'numerical',
-                    'ks_statistic': float(ks_stat),
-                    'p_value': float(p_value),
-                    'drifted': drifted,
-                    'ref_mean': float(ref_mean),
-                    'curr_mean': float(curr_mean),
-                    'mean_diff_pct': float(mean_diff_pct),
-                    'ref_std': float(ref_values.std()),
-                    'curr_std': float(curr_values.std()),
+                drift_report["feature_reports"][feat] = {
+                    "type": "numerical",
+                    "ks_statistic": float(ks_stat),
+                    "p_value": float(p_value),
+                    "drifted": drifted,
+                    "ref_mean": float(ref_mean),
+                    "curr_mean": float(curr_mean),
+                    "mean_diff_pct": float(mean_diff_pct),
+                    "ref_std": float(ref_values.std()),
+                    "curr_std": float(curr_values.std()),
                 }
 
                 if drifted:
-                    drift_report['drifted_features'].append(feat)
+                    drift_report["drifted_features"].append(feat)
 
         # Проверка категориальных признаков (Хи-квадрат)
         for feat in self.categorical_features:
@@ -210,53 +208,48 @@ class DataDriftDetector:
 
             if len(ref_aligned) > 1 and len(curr_aligned) > 1 and sum(ref_aligned) > 0 and sum(curr_aligned) > 0:
                 from scipy.stats import chi2_contingency
+
                 contingency = np.array([ref_aligned, curr_aligned])
                 chi2, p_value, dof, expected = chi2_contingency(contingency)
 
                 drifted = p_value < self.threshold
 
-                drift_report['feature_reports'][feat] = {
-                    'type': 'categorical',
-                    'chi2_statistic': float(chi2),
-                    'p_value': float(p_value),
-                    'drifted': drifted,
-                    'ref_distribution': {str(k): float(v) for k, v in ref_counts.to_dict().items()},
-                    'curr_distribution': {str(k): float(v) for k, v in curr_counts.to_dict().items()},
+                drift_report["feature_reports"][feat] = {
+                    "type": "categorical",
+                    "chi2_statistic": float(chi2),
+                    "p_value": float(p_value),
+                    "drifted": drifted,
+                    "ref_distribution": {str(k): float(v) for k, v in ref_counts.to_dict().items()},
+                    "curr_distribution": {str(k): float(v) for k, v in curr_counts.to_dict().items()},
                 }
 
                 if drifted:
-                    drift_report['drifted_features'].append(feat)
+                    drift_report["drifted_features"].append(feat)
 
         # Общий вердикт
         total_features = len(self.numerical_features) + len(self.categorical_features)
         if total_features > 0:
-            drift_report['drift_percentage'] = len(drift_report['drifted_features']) / total_features * 100
-            drift_report['overall_drift'] = len(drift_report['drifted_features']) > 0
+            drift_report["drift_percentage"] = len(drift_report["drifted_features"]) / total_features * 100
+            drift_report["overall_drift"] = len(drift_report["drifted_features"]) > 0
 
             # Генерируем рекомендации
-            if drift_report['overall_drift']:
-                if drift_report['drift_percentage'] > 30:
-                    drift_report['recommendations'].append(
+            if drift_report["overall_drift"]:
+                if drift_report["drift_percentage"] > 30:
+                    drift_report["recommendations"].append(
                         "🚨 КРИТИЧЕСКИЙ ДРЕЙФ: требуется немедленное переобучение модели"
                     )
-                elif drift_report['drift_percentage'] > 10:
-                    drift_report['recommendations'].append(
+                elif drift_report["drift_percentage"] > 10:
+                    drift_report["recommendations"].append(
                         "⚠️ УМЕРЕННЫЙ ДРЕЙФ: рекомендуется переобучить модель в ближайшее время"
                     )
                 else:
-                    drift_report['recommendations'].append(
-                        "ℹ️ НЕБОЛЬШОЙ ДРЕЙФ: следите за качеством модели"
-                    )
+                    drift_report["recommendations"].append("ℹ️ НЕБОЛЬШОЙ ДРЕЙФ: следите за качеством модели")
 
                 # Добавляем конкретные признаки
-                top_drifted = drift_report['drifted_features'][:5]
-                drift_report['recommendations'].append(
-                    f"Признаки с дрейфом: {', '.join(top_drifted)}"
-                )
+                top_drifted = drift_report["drifted_features"][:5]
+                drift_report["recommendations"].append(f"Признаки с дрейфом: {', '.join(top_drifted)}")
             else:
-                drift_report['recommendations'].append(
-                    "✅ Дрейф не обнаружен. Модель можно использовать дальше."
-                )
+                drift_report["recommendations"].append("✅ Дрейф не обнаружен. Модель можно использовать дальше.")
 
         return drift_report
 
@@ -268,7 +261,7 @@ class DataDriftDetector:
         # Проверка на пропуски
         missing_data = df.isna().sum()
         missing_pct = (missing_data / len(df) * 100).to_dict()
-        quality_report['missing_values'] = {str(k): float(v) for k, v in missing_pct.items() if v > 0}
+        quality_report["missing_values"] = {str(k): float(v) for k, v in missing_pct.items() if v > 0}
 
         # Проверка на выбросы (для числовых признаков)
         outliers = {}
@@ -283,43 +276,64 @@ class DataDriftDetector:
                 outlier_mask = (df[feat] < lower_bound) | (df[feat] > upper_bound)
                 outliers[feat] = float(outlier_mask.mean() * 100)
 
-        quality_report['outliers_percentage'] = outliers
+        quality_report["outliers_percentage"] = outliers
 
         # Проверка на новые категории
         new_categories = {}
         for feat in self.categorical_features:
-            if feat in df.columns and feat in self.ref_stats['categorical']:
+            if feat in df.columns and feat in self.ref_stats["categorical"]:
                 ref_cats = set(self.reference_data[feat].unique())
                 curr_cats = set(df[feat].unique())
                 new_cats = curr_cats - ref_cats
                 if new_cats:
                     new_categories[feat] = list(new_cats)[:5]
 
-        quality_report['new_categories'] = new_categories
+        quality_report["new_categories"] = new_categories
 
         return quality_report
 
     def generate_alert_message(self, drift_report: Dict) -> str:
-        """Генерирует человеко-читаемое сообщение для алерта"""
-        if not drift_report['overall_drift']:
+        """
+        Генерирует человеко-читаемое сообщение-алерт об обнаруженном дрейфе.
+
+        Args:
+            drift_report: dict от detect_drift()
+
+        Returns:
+            str: текстовое сообщение (с эмодзи и деталями)
+        """
+        if not drift_report["overall_drift"]:
             return f"✅ Модель {self.model_name}: дрейф не обнаружен"
 
         msg = f"⚠️ ДРЕЙФ ДАННЫХ в модели {self.model_name}\n"
-        msg += f"Дрейфующих признаков: {len(drift_report['drifted_features'])} ({drift_report['drift_percentage']:.1f}%)\n"
+        msg += (
+            f"Дрейфующих признаков: {len(drift_report['drifted_features'])} ({drift_report['drift_percentage']:.1f}%)\n"
+        )
 
-        if drift_report['recommendations']:
+        if drift_report["recommendations"]:
             msg += "\nРекомендации:\n"
-            for rec in drift_report['recommendations'][:3]:
+            for rec in drift_report["recommendations"][:3]:
                 msg += f"• {rec}\n"
 
         return msg
 
-    def save_report(self, drift_report: Dict, report_dir: str = 'logs/drift_reports'):
-        """Сохраняет отчет о дрейфе в файл"""
+    def save_report(self, drift_report: Dict, report_dir: str = None):
+        """
+        Сохраняет отчёт о дрейфе в JSON-файл.
+
+        Args:
+            drift_report: dict от detect_drift()
+            report_dir: директория сохранения (по умолчанию: logs/drift_reports)
+
+        Returns:
+            str: путь к сохранённому файлу
+        """
+        if report_dir is None:
+            report_dir = config.LOGS_DIR / "drift_reports"
         os.makedirs(report_dir, exist_ok=True)
 
         filename = f"{report_dir}/drift_{self.model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(filename, 'w', encoding='utf-8') as f:
+        with open(filename, "w", encoding="utf-8") as f:
             # Конвертируем numpy типы в Python типы для JSON
             json.dump(drift_report, f, ensure_ascii=False, indent=2, default=str)
 
@@ -338,60 +352,97 @@ class DriftMonitorScheduler:
         self.last_checks = {}
 
     def register_model(self, model_name: str, detector: DataDriftDetector):
-        """Регистрирует модель для мониторинга"""
+        """
+        Регистрирует модель для мониторинга дрейфа.
+
+        Args:
+            model_name: имя модели (для идентификации)
+            detector: экземпляр DataDriftDetector
+        """
         self.detectors[model_name] = detector
         self.last_checks[model_name] = None
 
     def check_all_models(self, current_data: pd.DataFrame) -> Dict[str, Dict]:
-        """Проверяет все зарегистрированные модели"""
+        """
+        Проверяет дрейф для всех зарегистрированных моделей.
+
+        Args:
+            current_data: новые данные для проверки
+
+        Returns:
+            dict: {model_name: drift_report} для каждой модели
+        """
         results = {}
         for name, detector in self.detectors.items():
             try:
                 results[name] = detector.detect_drift(current_data)
                 self.last_checks[name] = datetime.now()
             except Exception as e:
-                results[name] = {'error': str(e)}
+                results[name] = {"error": str(e)}
 
         return results
 
     def get_models_needing_retraining(self, drift_threshold: float = 10.0) -> List[str]:
-        """Возвращает список моделей, которым нужно переобучение"""
+        """
+        Возвращает список моделей с дрейфом выше порога, требующих переобучения.
+
+        Args:
+            drift_threshold: процент дрейфа, выше которого модель требует переобучения
+
+        Returns:
+            list[str]: имена моделей, требующих переобучения
+        """
         needing = []
         for name, detector in self.detectors.items():
-            if hasattr(detector, 'last_report') and detector.last_report:
-                if detector.last_report.get('drift_percentage', 0) > drift_threshold:
+            if hasattr(detector, "last_report") and detector.last_report:
+                if detector.last_report.get("drift_percentage", 0) > drift_threshold:
                     needing.append(name)
         return needing
 
-def generate_recommendations(self, drift_report):
+
+def generate_recommendations(drift_report):
+    """
+    Генерирует рекомендации на основе отчёта о дрейфе.
+
+    Args:
+        drift_report: dict от detect_drift()
+
+    Returns:
+        list[str]: список рекомендаций
+    """
     recs = []
-    if drift_report['overall_drift']:
+    if drift_report["overall_drift"]:
         recs.append("Рекомендуется переобучить модель на новых данных")
-        if len(drift_report['drifted_features']) > 3:
+        if len(drift_report["drifted_features"]) > 3:
             recs.append("Рассмотреть добавление/удаление признаков")
         recs.append("Проверить качество новых данных (пропуски, выбросы)")
     else:
         recs.append("Данные стабильны — модель можно использовать")
     return recs
 
+
 def plot_drift_visualization(drift_report, reference_data, current_data):
     """
-    Визуализация дрейфа для ключевых признаков
+    Строит сравнение распределений дрейфующих признаков (reference vs current).
+
+    Args:
+        drift_report: dict от detect_drift()
+        reference_data: эталонные данные (DataFrame)
+        current_data: новые данные (DataFrame)
+
+    Returns:
+        plotly.graph_objects.Figure: subplot 2×2 с гистограммами
     """
     import plotly.subplots as sp
 
     # Берем топ-4 признака с наибольшим дрейфом
-    drifted_features = drift_report['drifted_features'][:4]
+    drifted_features = drift_report["drifted_features"][:4]
 
     if not drifted_features:
         return None
 
     # Создаем подграфики
-    fig = sp.make_subplots(
-        rows=2, cols=2,
-        subplot_titles=drifted_features,
-        vertical_spacing=0.15
-    )
+    fig = sp.make_subplots(rows=2, cols=2, subplot_titles=drifted_features, vertical_spacing=0.15)
 
     for i, feature in enumerate(drifted_features):
         row = i // 2 + 1
@@ -399,32 +450,18 @@ def plot_drift_visualization(drift_report, reference_data, current_data):
 
         # Добавляем распределение эталонных данных
         fig.add_trace(
-            go.Histogram(
-                x=reference_data[feature],
-                name='Эталон',
-                opacity=0.7,
-                marker_color='blue',
-                nbinsx=30
-            ),
-            row=row, col=col
+            go.Histogram(x=reference_data[feature], name="Эталон", opacity=0.7, marker_color="blue", nbinsx=30),
+            row=row,
+            col=col,
         )
 
         # Добавляем распределение новых данных
         fig.add_trace(
-            go.Histogram(
-                x=current_data[feature],
-                name='Новые данные',
-                opacity=0.7,
-                marker_color='red',
-                nbinsx=30
-            ),
-            row=row, col=col
+            go.Histogram(x=current_data[feature], name="Новые данные", opacity=0.7, marker_color="red", nbinsx=30),
+            row=row,
+            col=col,
         )
 
-    fig.update_layout(
-        height=600,
-        title_text="Сравнение распределений признаков",
-        showlegend=True
-    )
+    fig.update_layout(height=600, title_text="Сравнение распределений признаков", showlegend=True)
 
     return fig

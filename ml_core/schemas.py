@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Dict, Any
-import pandas as pd
 
 # class AnalysisRequest(BaseModel):
 #     df: Any  # будем передавать как dict или использовать custom validator
@@ -40,6 +39,8 @@ class AnalysisRequest(BaseModel):
 
 
 class CompositeScoreRequest(BaseModel):
+    """Запрос на создание композитной оценки — взвешенная сумма признаков."""
+
     df: Any
     feature_weights: Dict[str, float]
     score_name: str = "custom_score"
@@ -90,6 +91,7 @@ class AnalysisResult(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+
 # class AnalysisResult(BaseModel):
 #     metrics: Dict[str, Any]
 #     test_metrics: Dict[str, float]
@@ -105,6 +107,7 @@ class AnalysisResult(BaseModel):
 
 class TrajectoryRequest(BaseModel):
     """Запрос на анализ траектории студента"""
+
     df: Any
     student_id: Any
     value_col: str = "avg_grade"

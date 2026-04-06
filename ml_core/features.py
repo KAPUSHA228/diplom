@@ -2,25 +2,32 @@
 Модуль с функциями для создания признаков (feature engineering)
 ВАША ЗОНА ОТВЕТСТВЕННОСТИ
 """
+
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from imblearn.over_sampling import SMOTE
 from sklearn.feature_selection import mutual_info_classif, RFE
 from itertools import combinations
-from typing import List, Dict, Union, Optional
+from typing import List, Optional
 from ml_core.error_handler import logger
 
 
-def build_composite_score(df, feature_weights: dict,
-                          score_name="custom_score",
-                          normalize: bool = True,
-                          assign_id: bool = True) -> tuple[pd.DataFrame, str]:
+def build_composite_score(
+    df, feature_weights: dict, score_name="custom_score", normalize: bool = True, assign_id: bool = True
+) -> tuple[pd.DataFrame, str]:
     """
-    Конструктор композитной оценки.
+    Конструктор композитной оценки — взвешенная сумма признаков с нормализацией.
 
-    feature_weights = {'avg_grade': 0.4, 'stress_level': -0.3, 'activity_score': 0.3, ...}
-    Отрицательный вес = обратное влияние.
+    Args:
+        df: исходный DataFrame
+        feature_weights: dict {имя_признака: вес}, отрицательный вес = обратное влияние
+        score_name: имя новой колонки (по умолчанию "custom_score")
+        normalize: нормализовать признаки в [0, 1] перед суммированием
+        assign_id: присвоить ID по перцентилям (1-100)
+
+    Returns:
+        (df, score_name): DataFrame с новой колонкой и имя скоринга
     """
     df = df.copy()
     score = pd.Series(0.0, index=df.index)
@@ -28,101 +35,123 @@ def build_composite_score(df, feature_weights: dict,
     for feature, weight in feature_weights.items():
         if feature in df.columns:
             col = df[feature].fillna(df[feature].median())
-            if normalize and df[feature].dtype in ['int64', 'float64']:
+            if normalize and df[feature].dtype in ["int64", "float64"]:
                 col = (col - col.min()) / (col.max() - col.min() + 1e-8)
             score += col * weight
 
     df[score_name] = score
     if assign_id:
-        df[f"{score_name}_id"] = pd.qcut(
-            df[score_name],
-            q=100,
-            labels=False,
-            duplicates='drop'
-        ) + 1  # от 1 до 100
+        df[f"{score_name}_id"] = pd.qcut(df[score_name], q=100, labels=False, duplicates="drop") + 1  # от 1 до 100
     return df, score_name
 
 
 def add_composite_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Создает композитные признаки ТОЛЬКО если есть необходимые исходные данные.
-    Если данных нет — колонка не создаётся или заполняется NaN.
+    Создаёт 6 композитных признаков: trend_grades, grade_stability, cognitive_load,
+    overall_satisfaction, psychological_wellbeing, academic_activity.
+
+    Args:
+        df: исходный DataFrame с колонками успеваемости, анкет, психотестов
+
+    Returns:
+        pd.DataFrame: DataFrame с добавленными композитными колонками
     """
     df = df.copy()
 
     # 1. Тренд успеваемости
-    if {'max_grade', 'min_grade'}.issubset(df.columns):
-        df['trend_grades'] = df['max_grade'] - df['min_grade']
+    if {"max_grade", "min_grade"}.issubset(df.columns):
+        df["trend_grades"] = df["max_grade"] - df["min_grade"]
     # else: колонка не создаётся — это лучше, чем заполнять 0
 
     # 2. Стабильность успеваемости
-    if {'grade_std', 'avg_grade'}.issubset(df.columns):
-        df['grade_stability'] = df['grade_std'] / (df['avg_grade'] + 0.01)
+    if {"grade_std", "avg_grade"}.issubset(df.columns):
+        df["grade_stability"] = df["grade_std"] / (df["avg_grade"] + 0.01)
 
     # 3. Когнитивная нагрузка
     cognitive_components = []
-    if 'workload_perception' in df.columns:
-        cognitive_components.append(df['workload_perception'] * 2)
-    if 'stress_level' in df.columns:
-        cognitive_components.append(df['stress_level'])
-    if 'n_essays' in df.columns:
-        cognitive_components.append(df['n_essays'] * 0.5)
+    if "workload_perception" in df.columns:
+        cognitive_components.append(df["workload_perception"] * 2)
+    if "stress_level" in df.columns:
+        cognitive_components.append(df["stress_level"])
+    if "n_essays" in df.columns:
+        cognitive_components.append(df["n_essays"] * 0.5)
 
     if cognitive_components:
-        df['cognitive_load'] = sum(cognitive_components) / len(cognitive_components)
+        df["cognitive_load"] = sum(cognitive_components) / len(cognitive_components)
     # else: не создаём колонку
 
     # 4. Индекс удовлетворенности
     satisfaction_components = []
-    if 'satisfaction_score' in df.columns:
-        satisfaction_components.append(df['satisfaction_score'])
-    if 'engagement_score' in df.columns:
-        satisfaction_components.append(df['engagement_score'])
+    if "satisfaction_score" in df.columns:
+        satisfaction_components.append(df["satisfaction_score"])
+    if "engagement_score" in df.columns:
+        satisfaction_components.append(df["engagement_score"])
 
     if satisfaction_components:
-        df['overall_satisfaction'] = sum(satisfaction_components) / len(satisfaction_components)
+        df["overall_satisfaction"] = sum(satisfaction_components) / len(satisfaction_components)
 
     # 5. Психологическое благополучие
     psych_components = []
-    if 'motivation_score' in df.columns:
-        psych_components.append(df['motivation_score'])
-    if 'anxiety_score' in df.columns:
-        psych_components.append(10 - df['anxiety_score'])
-    if 'stress_level' in df.columns:
-        psych_components.append(10 - df['stress_level'])
+    if "motivation_score" in df.columns:
+        psych_components.append(df["motivation_score"])
+    if "anxiety_score" in df.columns:
+        psych_components.append(10 - df["anxiety_score"])
+    if "stress_level" in df.columns:
+        psych_components.append(10 - df["stress_level"])
 
     if psych_components:
-        df['psychological_wellbeing'] = sum(psych_components) / len(psych_components)
+        df["psychological_wellbeing"] = sum(psych_components) / len(psych_components)
 
     # 6. Академическая активность
     activity_components = []
-    if 'avg_grade' in df.columns:
-        activity_components.append(df['avg_grade'] * 2)
-    if 'n_courses' in df.columns:
-        activity_components.append(df['n_courses'] * 1.0)
-    if 'n_essays' in df.columns:
-        activity_components.append(df['n_essays'] * 2.0)
+    if "avg_grade" in df.columns:
+        activity_components.append(df["avg_grade"] * 2)
+    if "n_courses" in df.columns:
+        activity_components.append(df["n_courses"] * 1.0)
+    if "n_essays" in df.columns:
+        activity_components.append(df["n_essays"] * 2.0)
 
     if activity_components:
-        df['academic_activity'] = sum(activity_components) / len(activity_components)
+        df["academic_activity"] = sum(activity_components) / len(activity_components)
 
     return df
 
 
 def get_base_features(df: pd.DataFrame, is_synthetic: bool = False) -> list:
     """
-    Определение базовых признаков для анализа.
-    Для синтетических данных берёт все числовые колонки, кроме служебных.
+    Автоматически определяет список числовых признаков из DataFrame.
+    Исключает служебные колонки (ID, фамилии, целевые переменные).
+
+    Args:
+        df: исходный DataFrame
+        is_synthetic: если True — расширенный список исключений для синтетики
+
+    Returns:
+        list[str]: список имён числовых признаков
     """
     df = df.copy()
 
     exclude = {
-        'student_id', 'user', 'user_id', 'VK_id', 'vk ID',
-        'Фамилия', 'Имя', 'ВУЗ', 'дата', 'date',
-        '_source_sheet', '_sheet_type', 'cluster',
-        'risk_flag', 'burnout_risk', 'high_creativity',
-        'value_profile', 'leadership_potential',
-        'active_participation', 'career_clarity'
+        "student_id",
+        "user",
+        "user_id",
+        "VK_id",
+        "vk ID",
+        "Фамилия",
+        "Имя",
+        "ВУЗ",
+        "дата",
+        "date",
+        "_source_sheet",
+        "_sheet_type",
+        "cluster",
+        "risk_flag",
+        "burnout_risk",
+        "high_creativity",
+        "value_profile",
+        "leadership_potential",
+        "active_participation",
+        "career_clarity",
     }
 
     if is_synthetic:
@@ -132,7 +161,7 @@ def get_base_features(df: pd.DataFrame, is_synthetic: bool = False) -> list:
 
         # Если после исключения ничего не осталось — берём все числовые кроме student_id
         if not features:
-            features = [col for col in numeric_cols if col != 'student_id']
+            features = [col for col in numeric_cols if col != "student_id"]
 
         return features
     else:
@@ -143,7 +172,16 @@ def get_base_features(df: pd.DataFrame, is_synthetic: bool = False) -> list:
 
 def select_features_for_model(x, y, top_n=7, final_n=5):
     """
-    Отбор признаков для модели
+    Отбор признаков: ANOVA F-value + Random Forest importance.
+
+    Args:
+        x: матрица признаков (DataFrame)
+        y: целевая переменная
+        top_n: число признаков после ANOVA (по умолчанию 7)
+        final_n: финальное число признаков после RF (по умолчанию 5)
+
+    Returns:
+        (X_selected, feature_names): отобранные признаки и их имена
     """
     from sklearn.feature_selection import SelectKBest, f_classif
     from sklearn.ensemble import RandomForestClassifier
@@ -167,6 +205,18 @@ def select_features_for_model(x, y, top_n=7, final_n=5):
 
 # ---- Предобработка и борьба с дисбалансом ----
 def preprocess_data(df: pd.DataFrame, feature_cols: list, target_col: str, use_smote: bool = True):
+    """
+    Предобработка: заполнение пропусков медианой + опциональный SMOTE.
+
+    Args:
+        df: исходный DataFrame
+        feature_cols: список имён признаков
+        target_col: имя целевой переменной
+        use_smote: применять ли SMOTE для балансировки классов
+
+    Returns:
+        (X, y): обработанные признаки и целевая переменная
+    """
     df = df.copy()
 
     x = df[feature_cols].fillna(df[feature_cols].median(numeric_only=True))
@@ -181,6 +231,7 @@ def preprocess_data(df: pd.DataFrame, feature_cols: list, target_col: str, use_s
         return x, y
 
     from imblearn.over_sampling import SMOTE
+
     smote = SMOTE(random_state=42, k_neighbors=min(5, min_class_size - 1))
     x_res, y_res = smote.fit_resample(x, y)
     return x_res, y_res
@@ -188,6 +239,18 @@ def preprocess_data(df: pd.DataFrame, feature_cols: list, target_col: str, use_s
 
 # ---- Отбор признаков ----
 def select_features(X, y, top_n=10, final_n=5):
+    """
+    Отбор признаков: Mutual Information + RFE (LogisticRegression).
+
+    Args:
+        X: матрица признаков (DataFrame)
+        y: целевая переменная
+        top_n: сколько признаков оставить после MI
+        final_n: сколько финальных признаков оставить после RFE
+
+    Returns:
+        (X_selected, selected_cols): отобранные признаки и их имена
+    """
     mi = mutual_info_classif(X, y)
     top_features = X.columns[np.argsort(-mi)[:top_n]]
     rfe = RFE(LogisticRegression(max_iter=1000), n_features_to_select=final_n)
@@ -197,7 +260,16 @@ def select_features(X, y, top_n=10, final_n=5):
 
 
 def preprocess_data_for_smote(X_train: pd.DataFrame, y_train: pd.Series):
-    """SMOTE применяется ТОЛЬКО к обучающей выборке"""
+    """
+    Применяет SMOTE ТОЛЬКО к обучающей выборке (без утечки в тест).
+
+    Args:
+        X_train: обучающие признаки
+        y_train: обучающие метки
+
+    Returns:
+        (X_res, y_res): сбалансированные данные (или исходные если SMOTE отключён)
+    """
     min_class_size = y_train.value_counts().min()
     if min_class_size <= 5:
         logger.warning(f"SMOTE отключён: в меньшем классе {min_class_size} объектов")
@@ -213,14 +285,24 @@ def create_feature_combinations(
     numerical_cols: Optional[List[str]] = None,
     text_cols: Optional[List[str]] = None,
     max_pairs: int = 15,
-    methods: List[str] = None
+    methods: List[str] = None,
 ) -> pd.DataFrame:
     """
-    Автоматически создаёт новые признаки путём объединения существующих.
-    Поддерживает: num+num, num+text, text+text.
+    Автоматически создаёт новые признаки путём комбинирования существующих.
+    num+num: sum, diff, ratio, product. num+text: numeric × length. text+text: concat.
+
+    Args:
+        df: исходный DataFrame
+        numerical_cols: список числовых колонок (если None — все числовые)
+        text_cols: список текстовых колонок (если None — object/string)
+        max_pairs: максимум комбинаций (по умолчанию 15)
+        methods: список методов ['sum', 'diff', 'ratio', 'product'] (по умолчанию все)
+
+    Returns:
+        pd.DataFrame: DataFrame с добавленными колонками комбинаций
     """
     if methods is None:
-        methods = ['sum', 'diff', 'ratio', 'product', 'concat']
+        methods = ["sum", "diff", "ratio", "product", "concat"]
 
     df = df.copy()
     new_features = {}
@@ -235,20 +317,20 @@ def create_feature_combinations(
         if col1 == col2:
             continue
 
-        if 'sum' in methods:
+        if "sum" in methods:
             new_features[f"{col1}_plus_{col2}"] = df[col1] + df[col2]
-        if 'diff' in methods:
+        if "diff" in methods:
             new_features[f"{col1}_minus_{col2}"] = df[col1] - df[col2]
-        if 'ratio' in methods and (df[col2] != 0).all():
+        if "ratio" in methods and (df[col2] != 0).all():
             new_features[f"{col1}_div_{col2}"] = df[col1] / df[col2]
-        if 'product' in methods:
+        if "product" in methods:
             new_features[f"{col1}_mul_{col2}"] = df[col1] * df[col2]
 
     # 2. Числовые + Текстовые
     if text_cols is None:
-        text_cols = [col for col in df.columns if df[col].dtype == 'object']
+        text_cols = [col for col in df.columns if df[col].dtype == "object"]
 
-    for num_col in numerical_cols[:3]:           # ограничиваем, чтобы не плодить слишком много
+    for num_col in numerical_cols[:3]:  # ограничиваем, чтобы не плодить слишком много
         for txt_col in text_cols:
             if len(new_features) >= max_pairs:
                 break
@@ -259,9 +341,7 @@ def create_feature_combinations(
     for col1, col2 in combinations(text_cols, 2):
         if len(new_features) >= max_pairs:
             break
-        new_features[f"{col1}_and_{col2}"] = (
-            df[col1].astype(str) + " | " + df[col2].astype(str)
-        )
+        new_features[f"{col1}_and_{col2}"] = df[col1].astype(str) + " | " + df[col2].astype(str)
 
     # Добавляем новые признаки
     df = pd.concat([df, pd.DataFrame(new_features)], axis=1)
