@@ -1,9 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import Plot from "react-plotly.js";
 import { getTrajectory, findNegativeDynamics, forecastStudent } from "../api";
+import { parseFile } from "../utils/parseFile";
+import { useSharedData } from "../hooks/useSharedData";
 
 export default function TimeSeries() {
+  const { data: sharedData, columns: sharedCols, hasShared } = useSharedData();
   const [file, setFile] = useState(null);
-  const [data, setData] = useState(null);
+  const [fileData, setFileData] = useState(null);
   const [valueCol, setValueCol] = useState("");
   const [timeCol, setTimeCol] = useState("semester");
   const [result, setResult] = useState(null);
@@ -13,77 +17,79 @@ export default function TimeSeries() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const activeData = fileData || sharedData;
+  const allStudents = activeData ? [...new Set(activeData.map(d => d.student_id ?? d.StudentID ?? d.user_id).filter(Boolean))] : [];
+
+  function initCols(data) {
+    if (!data?.length) return;
+    const keys = Object.keys(data[0]);
+    if (keys.includes("avg_grade")) setValueCol("avg_grade");
+    else { const num = keys.find(k => typeof data[0][k] === "number"); if (num) setValueCol(num); }
+  }
+
+  useEffect(() => {
+    if (hasShared && !fileData && !valueCol) initCols(sharedData);
+  }, [hasShared, fileData]);
+
   async function onFileChange(e) {
-    const f = e.target.files?.[0] || null;
-    setFile(f);
-    setResult(null); setDynamics(null); setForecast(null);
+    const f = e.target.files?.[0];
     if (!f) return;
+    setFile(f); setResult(null); setDynamics(null); setForecast(null);
     try {
-      const text = await f.text();
-      const lines = text.split(/\r?\n/).filter(Boolean);
-      const headers = lines[0].split(",").map((h) => h.trim());
-      const rows = lines.slice(1).map((l) => l.split(","));
-      const parsed = rows.map((r) => {
-        const obj = {};
-        headers.forEach((h, i) => {
-          const v = r[i]?.trim() || "";
-          obj[h] = isNaN(v) ? v : Number(v);
-        });
-        return obj;
-      });
-      setData(parsed);
-      if (headers.includes("avg_grade")) setValueCol("avg_grade");
-      if (headers.length > 2 && !valueCol) setValueCol(headers[2]);
+      const parsed = await parseFile(f);
+      setFileData(parsed?.allData || null);
+      initCols(parsed?.allData);
     } catch { /* ignore */ }
   }
 
   async function onTrajectory() {
-    if (!data || !valueCol || !selectedStudent) return;
+    if (!activeData || !valueCol || !selectedStudent) return;
     setBusy(true); setError("");
-    try {
-      const res = await getTrajectory(data, selectedStudent, valueCol, timeCol);
-      setResult(res);
-    } catch (e) { setError(String(e.message || e)); }
+    try { setResult(await getTrajectory(activeData, selectedStudent, valueCol, timeCol)); }
+    catch (e) { setError(String(e.message || e)); }
     finally { setBusy(false); }
   }
 
   async function onNegativeDynamics() {
-    if (!data || !valueCol) return;
+    if (!activeData || !valueCol) return;
     setBusy(true); setError("");
-    try {
-      const res = await findNegativeDynamics(data, valueCol, timeCol);
-      setDynamics(res);
-    } catch (e) { setError(String(e.message || e)); }
+    try { setDynamics(await findNegativeDynamics(activeData, valueCol, timeCol)); }
+    catch (e) { setError(String(e.message || e)); }
     finally { setBusy(false); }
   }
 
   async function onForecast() {
-    if (!data || !valueCol || !selectedStudent) return;
+    if (!activeData || !valueCol || !selectedStudent) return;
     setBusy(true); setError("");
-    try {
-      const res = await forecastStudent(data, selectedStudent, valueCol, timeCol);
-      setForecast(res);
-    } catch (e) { setError(String(e.message || e)); }
+    try { setForecast(await forecastStudent(activeData, selectedStudent, valueCol, timeCol)); }
+    catch (e) { setError(String(e.message || e)); }
     finally { setBusy(false); }
   }
 
-  const students = data ? [...new Set(data.map((d) => d.student_id ?? d.StudentID ?? d.user_id))] : [];
-
   return (
     <div className="card">
-      <h2>Временные ряды и траектории</h2>
-      <input type="file" accept=".csv" onChange={onFileChange} />
-      {data && (
+      <h2>📉 Временные ряды и траектории</h2>
+
+      <div style={{ marginBottom: 12 }}>
+        {hasShared && !fileData && (
+          <div className="ok" style={{ padding: 8, borderRadius: 6, background: "var(--bg-secondary)", marginBottom: 8 }}>
+            ✅ Используются данные с главной: <b>{sharedData.length} строк</b>, {sharedCols.length} колонок
+          </div>
+        )}
+        <input type="file" accept=".csv,.xlsx,.xls" onChange={onFileChange} />
+      </div>
+
+      {activeData && activeData.length > 0 && (
         <>
           <div className="row" style={{ marginTop: 8 }}>
             <label>Показатель: </label>
             <select value={valueCol} onChange={(e) => setValueCol(e.target.value)}>
-              {Object.keys(data[0]).filter((k) => typeof data[0][k] === "number").map((h) => <option key={h}>{h}</option>)}
+              {Object.keys(activeData[0]).filter((k) => typeof activeData[0][k] === "number").map((h) => <option key={h}>{h}</option>)}
             </select>
             <label>Студент: </label>
             <select value={selectedStudent} onChange={(e) => setSelectedStudent(e.target.value)}>
               <option value="">—</option>
-              {students.map((s) => <option key={s} value={s}>{s}</option>)}
+              {allStudents.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
           <div className="row" style={{ marginTop: 8 }}>
@@ -92,34 +98,27 @@ export default function TimeSeries() {
             <button onClick={onForecast} disabled={busy || !selectedStudent}>Прогноз</button>
           </div>
           {error && <p className="error">{error}</p>}
+
           {result && (
             <div>
+              <h3>📈 Траектория студента {selectedStudent}</h3>
               <p>Тренд: <b>{result.trend?.toFixed(3)}</b> | Статус: <b>{result.status}</b></p>
+              {result.chart && <Plot data={result.chart.data} layout={{ ...result.chart.layout, height: 350 }} config={{ responsive: true, displayModeBar: false }} style={{ width: "100%" }} />}
             </div>
           )}
           {dynamics && (
             <div>
-              <p>Проанализировано: <b>{dynamics.n_students_analyzed}</b> | В зоне риска: <b>{dynamics.at_risk_count}</b> ({dynamics.risk_percentage}%)</p>
+              <p>Проанализировано: <b>{dynamics.n_students_analyzed}</b> | В зоне риска: <b>{dynamics.at_risk_count}</b> ({dynamics.risk_percentage?.toFixed(1)}%)</p>
               {dynamics.at_risk_students?.length > 0 && (
-                <div className="table-wrap">
-                  <table>
-                    <thead><tr><th>Студент</th><th>Тренд</th><th>Начало</th><th>Конец</th></tr></thead>
-                    <tbody>
-                      {dynamics.at_risk_students.slice(0, 10).map((s, i) => (
-                        <tr key={i}><td>{s.student_id}</td><td>{s.trend?.toFixed(3)}</td><td>{s.first_value}</td><td>{s.last_value}</td></tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <div className="table-wrap"><table><thead><tr><th>Студент</th><th>Тренд</th><th>Начало</th><th>Конец</th></tr></thead><tbody>{dynamics.at_risk_students.slice(0, 10).map((s, i) => (<tr key={i}><td>{s.student_id}</td><td>{s.trend?.toFixed(3)}</td><td>{s.first_value}</td><td>{s.last_value}</td></tr>))}</tbody></table></div>
               )}
             </div>
           )}
           {forecast && (
             <div>
-              <p><b>Прогноз:</b></p>
-              {forecast.future_semesters?.map((s, i) => (
-                <p key={i}>Семестр {s}: <b>{forecast.predictions[i]?.toFixed(2)}</b></p>
-              ))}
+              <h3>🔮 Прогноз</h3>
+              {forecast.chart && <Plot data={forecast.chart.data} layout={{ ...forecast.chart.layout, height: 350 }} config={{ responsive: true, displayModeBar: false }} style={{ width: "100%" }} />}
+              {!forecast.chart && forecast.future_semesters?.map((s, i) => (<p key={i}>Семестр {s}: <b>{forecast.predictions[i]?.toFixed(2)}</b></p>))}
             </div>
           )}
         </>

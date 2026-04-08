@@ -43,17 +43,27 @@ def train_model_task(data_path: str):
         job.meta["progress"] = 10
         job.save_meta()
 
-        # Загружаем данные
-        df = pd.read_csv(data_path)
+        # Загружаем данные (пробуем разные кодировки)
+        try:
+            df = pd.read_csv(data_path, encoding="utf-8")
+        except UnicodeDecodeError:
+            df = pd.read_csv(data_path, encoding="cp1251")
+        except Exception:
+            df = pd.read_csv(data_path, encoding="utf-8", errors="replace")
+
         logger.info("train_model_task: loaded %d rows", len(df))
 
         job.meta["stage"] = "preprocessing"
         job.meta["progress"] = 30
         job.save_meta()
 
-        # Feature engineering
-        if "risk_flag" not in df.columns:
-            raise ValueError("Input dataset must contain 'risk_flag' column")
+        # Ищем целевую колонку (риск или target)
+        target_col = "risk_flag"
+        if target_col not in df.columns:
+            possible = [c for c in df.columns if "risk" in c.lower() or "target" in c.lower()]
+            target_col = possible[0] if possible else None
+            if target_col is None:
+                raise ValueError(f"Dataset must contain 'risk_flag' or similar column. Found: {list(df.columns)}")
 
         df = add_composite_features(df)
         feature_cols = get_base_features(df)
@@ -68,15 +78,15 @@ def train_model_task(data_path: str):
             if extra in df.columns and extra not in feature_cols:
                 feature_cols.append(extra)
 
-        X_res, y_res = preprocess_data(df, feature_cols, "risk_flag")
+        X_res, y_res = preprocess_data(df, feature_cols, target_col)
         X_sel, selected_cols = select_features(
             X_res, y_res, top_n=min(10, X_res.shape[1]), final_n=min(5, X_res.shape[1])
         )
 
         X_train_sel, X_test_sel, y_train, y_test = prepare_data_for_training(
-            pd.concat([X_sel, pd.Series(y_res, name="risk_flag")], axis=1),
+            pd.concat([X_sel, pd.Series(y_res, name=target_col)], axis=1),
             feature_cols=list(X_sel.columns),
-            target_col="risk_flag",
+            target_col=target_col,
         )
 
         job.meta["stage"] = "training"
@@ -142,8 +152,13 @@ def shap_task(model_id: str, data_path: str, threshold: float = 0.5):
         job.meta["progress"] = 40
         job.save_meta()
 
-        # Загружаем данные
-        df = pd.read_csv(data_path)
+        # Загружаем данные (пробуем разные кодировки)
+        try:
+            df = pd.read_csv(data_path, encoding="utf-8")
+        except UnicodeDecodeError:
+            df = pd.read_csv(data_path, encoding="cp1251")
+        except Exception:
+            df = pd.read_csv(data_path, encoding="utf-8", errors="replace")
         logger.info("shap_task: loaded %d rows", len(df))
 
         job.meta["stage"] = "computing_shap"

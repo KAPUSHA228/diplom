@@ -1,53 +1,51 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createCompositeScore } from "../api";
+import { parseFile } from "../utils/parseFile";
+import { useSharedData } from "../hooks/useSharedData";
 
 export default function CompositeScore() {
+  const { data: sharedData, columns: sharedCols, hasShared } = useSharedData();
   const [file, setFile] = useState(null);
-  const [data, setData] = useState(null);
+  const [fileData, setFileData] = useState(null);
   const [weights, setWeights] = useState({});
   const [scoreName, setScoreName] = useState("custom_score");
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function onFileChange(e) {
-    const f = e.target.files?.[0] || null;
-    setFile(f);
-    setResult(null);
-    if (!f) return;
-    try {
-      const text = await f.text();
-      const lines = text.split(/\r?\n/).filter(Boolean);
-      const headers = lines[0].split(",").map((h) => h.trim());
-      const rows = lines.slice(1).map((l) => l.split(","));
-      const parsed = rows.map((r) => {
-        const obj = {};
-        headers.forEach((h, i) => {
-          const v = r[i]?.trim() || "";
-          obj[h] = isNaN(v) ? v : Number(v);
-        });
-        return obj;
-      });
-      setData(parsed);
-      const numericCols = headers.filter((h) => typeof parsed[0]?.[h] === "number");
+  const activeData = fileData || sharedData;
+  const numericCols = activeData?.length ? Object.keys(activeData[0]).filter(k => typeof activeData[0][k] === "number") : [];
+
+  useEffect(() => {
+    if (hasShared && !fileData && Object.keys(weights).length === 0) {
       const w = {};
-      numericCols.forEach((c) => { w[c] = 0; });
+      numericCols.forEach(c => { w[c] = 1; });
       setWeights(w);
+    }
+  }, [hasShared, fileData, numericCols]);
+
+  async function onFileChange(e) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f); setResult(null);
+    try {
+      const parsed = await parseFile(f);
+      setFileData(parsed?.allData || null);
+      if (parsed?.allData?.length) {
+        const w = {};
+        Object.keys(parsed.allData[0]).filter(k => typeof parsed.allData[0][k] === "number").forEach(c => { w[c] = 1; });
+        setWeights(w);
+      }
     } catch { /* ignore */ }
   }
 
-  function onWeightChange(col, val) {
-    setWeights((prev) => ({ ...prev, [col]: val }));
-  }
-
   async function onRun() {
-    if (!data) return;
-    const active = {};
-    Object.entries(weights).forEach(([k, v]) => { if (Math.abs(v) > 1e-6) active[k] = v; });
-    if (Object.keys(active).length === 0) { setError("Укажите хотя бы один ненулевой вес"); return; }
+    if (!activeData || Object.keys(weights).length === 0) return;
     setBusy(true); setError("");
     try {
-      const res = await createCompositeScore(data, active, scoreName);
+      const cleanWeights = {};
+      Object.entries(weights).forEach(([k, v]) => { cleanWeights[k] = Number(v) || 0; });
+      const res = await createCompositeScore(activeData, cleanWeights, scoreName);
       setResult(res);
     } catch (e) { setError(String(e.message || e)); }
     finally { setBusy(false); }
@@ -55,43 +53,50 @@ export default function CompositeScore() {
 
   return (
     <div className="card">
-      <h2>Конструктор композитных оценок</h2>
-      <input type="file" accept=".csv" onChange={onFileChange} />
-      {data && (
+      <h2>🎯 Конструктор композитных оценок</h2>
+
+      <div style={{ marginBottom: 12 }}>
+        {hasShared && !fileData && (
+          <div className="ok" style={{ padding: 8, borderRadius: 6, background: "var(--bg-secondary)", marginBottom: 8 }}>
+            ✅ Данные с главной: <b>{sharedData.length} строк</b>, {numericCols.length} числовых колонок
+          </div>
+        )}
+        <input type="file" accept=".csv,.xlsx,.xls" onChange={onFileChange} />
+      </div>
+
+      {numericCols.length > 0 && (
         <>
-          <div className="row" style={{ marginTop: 8 }}>
-            <label>Название: </label>
-            <input value={scoreName} onChange={(e) => setScoreName(e.target.value)} />
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 8 }}>
-            {Object.entries(weights).map(([col, val]) => (
-              <label key={col} style={{ fontSize: 13 }}>
-                {col}:{" "}
-                <input type="range" min="-3" max="3" step="0.1" value={val}
-                  onChange={(e) => onWeightChange(col, parseFloat(e.target.value))} />
-                <span>{val.toFixed(1)}</span>
-              </label>
-            ))}
-          </div>
-          <button onClick={onRun} disabled={busy}>Создать оценку</button>
-          {error && <p className="error">{error}</p>}
-          {result && (
-            <div>
-              <p>Создана оценка: <b>{result.score_name}</b></p>
-              {result.statistics && (
-                <div className="table-wrap">
-                  <table>
-                    <tbody>
-                      {Object.entries(result.statistics).map(([k, v]) => (
-                        <tr key={k}><td><b>{k}</b></td><td>{typeof v === "number" ? v.toFixed(2) : v}</td></tr>
-                      ))}
-                    </tbody>
-                  </table>
+          <label><b>Название оценки:</b>
+            <input type="text" value={scoreName} onChange={e => setScoreName(e.target.value)} style={{ marginLeft: 8, padding: 4, borderRadius: 4, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }} />
+          </label>
+
+          <div style={{ marginTop: 12 }}>
+            <label><b>Веса признаков:</b></label>
+            <div style={{ maxHeight: 300, overflowY: "auto", marginTop: 8 }}>
+              {numericCols.map(col => (
+                <div key={col} style={{ marginBottom: 6, display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ minWidth: 140, fontSize: 13 }}>{col}</span>
+                  <input type="range" min="-3" max="3" step="1" value={weights[col] || 0} onChange={e => setWeights(p => ({ ...p, [col]: Number(e.target.value) }))} style={{ flex: 1 }} />
+                  <span style={{ minWidth: 20, textAlign: "center" }}>{weights[col] || 0}</span>
                 </div>
-              )}
+              ))}
             </div>
-          )}
+          </div>
+
+          <button className="primary" onClick={onRun} disabled={busy} style={{ marginTop: 12 }}>Создать оценку</button>
         </>
+      )}
+
+      {error && <p className="error">{error}</p>}
+      {result && (
+        <div style={{ marginTop: 12 }}>
+          <p className="ok">✅ Оценка <b>{result.score_name}</b> создана</p>
+          {result.statistics && (
+            <table className="matrix"><tbody>
+              {Object.entries(result.statistics).map(([k, v]) => <tr key={k}><td><b>{k}</b></td><td>{typeof v === "number" ? v.toFixed(2) : v}</td></tr>)}
+            </tbody></table>
+          )}
+        </div>
       )}
     </div>
   );

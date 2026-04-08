@@ -33,20 +33,37 @@ export async function getTaskStatus(taskId) {
     return request(`/api/v1/ml/tasks/${taskId}`);
 }
 
-export async function uploadForCorrelation(file) {
+export async function uploadForCorrelation(file, sheetName = null) {
     const form = new FormData();
     form.append("file", file);
+    if (sheetName) form.append("sheet_name", sheetName);
     return request("/api/v1/ml/correlation", { method: "POST", body: form });
 }
 
 // ==================== Новые эндпоинты (endpoints.py) ====================
 
 /** Полный анализ через ResearchAnalyzer */
-export async function runFullAnalysis(data) {
+export async function runFullAnalysis(data, params = {}) {
     return request("/api/v1/analyze/full", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ df: data }),
+        body: JSON.stringify({
+            df: data,
+            target_col: params.target_col || "risk_flag",
+            n_clusters: params.n_clusters || 3,
+            corr_threshold: params.corr_threshold || 0.3,
+            risk_threshold: params.risk_threshold || 0.5,
+            n_iter_tuning: params.n_iter_tuning || 10,
+            use_smote: params.use_smote !== undefined ? params.use_smote : true,
+            // Параметры из сайдбара
+            use_hp_tuning: params.use_hp_tuning || false,
+            optimization_metric: params.optimization_metric || "f1",
+            n_features_to_select: params.n_features_to_select || 7,
+            shap_top_n: params.shap_top_n || 5,
+            use_lr: params.use_lr !== undefined ? params.use_lr : true,
+            use_rf: params.use_rf !== undefined ? params.use_rf : true,
+            use_xgb: params.use_xgb !== undefined ? params.use_xgb : true,
+        }),
     });
 }
 
@@ -65,6 +82,20 @@ export async function selectSubset(data, condition = null, nSamples = null, byCl
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ df: data, condition, n_samples: nSamples, by_cluster: byCluster }),
+    });
+}
+
+/** Создание комбинированных признаков */
+export async function createFeatureCombinations(data, numericalCols, textCols, maxPairs = 15) {
+    return request("/api/v1/analyze/combinations/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            df: data,
+            numerical_cols: numericalCols,
+            text_cols: textCols,
+            max_pairs: maxPairs,
+        }),
     });
 }
 
@@ -139,6 +170,11 @@ export async function checkDrift(referenceData, currentData, modelName = "unknow
     });
 }
 
+/** История метрик моделей */
+export async function getMetricsHistory() {
+    return request("/api/v1/analyze/metrics/history");
+}
+
 // ==================== Эксперименты ====================
 
 /** Сохранение эксперимента */
@@ -158,4 +194,27 @@ export async function listExperiments(limit = 20) {
 /** Загрузка эксперимента по ID */
 export async function getExperiment(experimentId) {
     return request(`/api/v1/analyze/experiments/${experimentId}`);
+}
+
+// ==================== Excel Mapping ====================
+
+/** Получить превью листа (типы колонок и уникальные значения) */
+export async function getExcelPreview(file, sheetName = "0") {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("sheet_name", sheetName);
+    console.log("[api.js] getExcelPreview: отправляю sheet_name =", sheetName);
+    return request("/api/v1/analyze/excel/preview", { method: "POST", body: form });
+}
+
+/** Обработать лист Excel с настройками маппинга */
+export async function processExcel(file, sheetName = "0", sheetGroup = "numeric", mappingConfig = null) {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("sheet_name", sheetName);
+    form.append("sheet_group", sheetGroup);
+    if (mappingConfig) {
+        form.append("mapping_config", JSON.stringify(mappingConfig));
+    }
+    return request("/api/v1/analyze/excel/process", { method: "POST", body: form });
 }
