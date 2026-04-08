@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from ml_core.analyzer import ResearchAnalyzer
 from ml_core.imputation import handle_missing_values, detect_outliers
 from ml_core.crosstab import create_crosstab, simple_crosstab
+from ml_core.features import create_feature_combinations
 from ml_core.timeseries import (
     analyze_student_trajectory,
     detect_negative_dynamics,
@@ -9,15 +10,185 @@ from ml_core.timeseries import (
 )
 from ml_core.drift_detector import DataDriftDetector
 from ml_core.experiment_tracker import ExperimentTracker
-from ..schemas import AnalysisRequest, CompositeRequest, SubsetRequest, AnalysisResponse
+from ml_core.loader import get_sheet_preview
+from ..schemas import AnalysisRequest, CompositeRequest, SubsetRequest, FeatureCombinationRequest
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import pandas as pd
+import numpy as np
 
 router = APIRouter(prefix="/api/v1/analyze")
 
 # Один экземпляр анализатора на всё приложение
 analyzer = ResearchAnalyzer()
+
+
+def _safe_json_serializable(obj):
+    """Рекурсивная очистка данных от nan/inf/numpy-типов для JSON."""
+    if obj is None:
+        return None
+    if isinstance(obj, np.ndarray):
+        return _safe_json_serializable(obj.tolist())
+    if isinstance(obj, (np.floating, np.float64, np.float32)):
+        val = float(obj)
+        if np.isnan(val) or np.isinf(val):
+            return None
+        return val
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, dict):
+        return {k: _safe_json_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_safe_json_serializable(v) for v in obj]
+    if isinstance(obj, float):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return obj
+    if hasattr(obj, "to_dict"):
+        return _safe_json_serializable(obj.to_dict())
+    return obj
+
+
+# ==================== Excel Processing ====================
+
+
+class ExcelPreviewRequest(BaseModel):
+    sheet_name: str
+
+
+class ExcelProcessRequest(BaseModel):
+    sheet_name: str
+    mapping_config: Optional[Dict[str, Any]] = None
+
+
+@router.post("/excel/preview")
+async def excel_preview(file: UploadFile = File(...), sheet_name: str = Form("0")):
+    """
+    Возвращает метаданные листа: типы колонок и уникальные значения для настройки маппинга.
+    """
+    import tempfile
+    import os
+
+    # Сохраняем временный файл
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        # === РЕШЕНИЕ ПРОБЛЕМЫ "Worksheet named '0' not found" ===
+        # Если передан индекс (цифра), находим реальное имя листа
+        xl = pd.ExcelFile(tmp_path)
+        all_sheets = xl.sheet_names
+        target_name = sheet_name
+
+        print(f"DEBUG excel_preview: получен sheet_name='{sheet_name}'")
+        print(f"DEBUG excel_preview: все листы в файле: {all_sheets}")
+
+        if sheet_name.isdigit():
+            idx = int(sheet_name)
+            if 0 <= idx < len(all_sheets):
+                target_name = all_sheets[idx]
+            else:
+                raise ValueError(f"Лист с индексом {idx} не найден")
+        else:
+            # Проверяем точное совпадение
+            if sheet_name not in all_sheets:
+                # Пробуем найти по частичному совпадению (без учёта регистра и пробелов)
+                normalized = sheet_name.strip().lower()
+                found = [s for s in all_sheets if s.strip().lower() == normalized]
+                if found:
+                    target_name = found[0]
+                    print(f"DEBUG excel_preview: найдено частичное совпадение: '{sheet_name}' → '{target_name}'")
+                else:
+                    # Если не нашли — ищем по началу имени (первые символы)
+                    found_prefix = [s for s in all_sheets if s.lower().startswith(normalized[:6])]
+                    if found_prefix:
+                        target_name = found_prefix[0]
+                        print(f"DEBUG excel_preview: найдено по префиксу: '{sheet_name}' → '{target_name}'")
+                    else:
+                        print(
+                            f"DEBUG excel_preview: лист '{sheet_name}' НЕ НАЙДЕН! Доступны: {all_sheets}. Использую первый лист '{all_sheets[0]}'"
+                        )
+                        target_name = all_sheets[0]
+            else:
+                print(f"DEBUG excel_preview: точное совпадение '{sheet_name}'")
+
+        print(f"DEBUG excel_preview: ФИНАЛЬНОЕ target_name='{target_name}'")
+
+        preview = get_sheet_preview(tmp_path, target_name)
+        xl.close()  # Обязательно закрываем файл перед удалением!
+        return _safe_json_serializable(preview)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка превью: {str(e)}")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass  # На Windows иногда глючит блокировка
+
+
+@router.post("/excel/process")
+async def excel_process(
+    file: UploadFile = File(...),
+    sheet_name: str = Form("0"),
+    sheet_group: str = Form("numeric"),
+    mapping_config: Optional[str] = Form(None),
+):
+    """
+    Обрабатывает лист Excel с учетом пользовательских настроек маппинга.
+    """
+    import tempfile
+    import os
+    import json
+
+    config = None
+    if mapping_config:
+        try:
+            config = json.loads(mapping_config)
+        except Exception:
+            pass
+
+    # Сохраняем временный файл
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        # === РЕШЕНИЕ ПРОБЛЕМЫ "Worksheet named '0' not found" ===
+        xl = pd.ExcelFile(tmp_path)
+        target_name = sheet_name
+        if sheet_name.isdigit():
+            idx = int(sheet_name)
+            if 0 <= idx < len(xl.sheet_names):
+                target_name = xl.sheet_names[idx]
+            else:
+                raise ValueError(f"Лист с индексом {idx} не найден")
+        xl.close()
+
+        from ml_core.loader import preprocess_sheet
+
+        # Читаем файл уже по правильному имени
+        df = pd.read_excel(tmp_path, sheet_name=target_name)
+
+        # Передаем реальное имя листа в процессор
+        df_processed, msg = preprocess_sheet(df, sheet_group, target_name, mapping_config=config)
+
+        # Заменяем NaN и inf перед сериализацией
+        df_clean = df_processed.replace([np.inf, -np.inf], np.nan)
+        df_clean = df_clean.where(df_clean.notna(), None)
+
+        return {"message": msg, "data": _safe_json_serializable(df_clean.to_dict("records")), "rows": len(df_processed)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка обработки: {str(e)}")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
 
 # ==================== Дополнительные Pydantic-схемы ====================
@@ -65,25 +236,98 @@ class ExperimentSaveRequest(BaseModel):
     description: str = ""
 
 
-@router.post("/full", response_model=AnalysisResponse)
+@router.post("/full")
 async def full_analysis(request: AnalysisRequest):
     try:
         df = pd.DataFrame(request.df)
 
+        target = request.target_col
+        if not target or target not in df.columns:
+            # Ищем первую числовую колонку (исключая ID)
+            num_cols = df.select_dtypes(include="number").columns
+            exclude = ["user", "_id", "vk"]
+            possible = [c for c in num_cols if not any(x in c.lower() for x in exclude)]
+            target = possible[0] if possible else num_cols[0]
+        # Передаем все параметры, которые пришли от фронтенда
         result = analyzer.run_full_analysis(
             df=df,
-            target_col=request.target_col,
+            target_col=target,
             n_clusters=request.n_clusters,
             corr_threshold=request.corr_threshold,
             use_smote=request.use_smote,
+            # Передаем настройки моделей из сайдбара
+            use_lr=request.use_lr,
+            use_rf=request.use_rf,
+            use_xgb=request.use_xgb,
         )
 
-        return AnalysisResponse(
-            metrics=result.get("metrics", {}),
-            selected_features=result.get("selected_features", []),
-            cluster_profiles=result.get("cluster_profiles", {}),
-            explanations=result.get("explanations", []),
-        )
+        # === АГРЕССИВНАЯ ОЧИСТКА ДАННЫХ ===
+        import numpy as np
+
+        def scrub(obj):
+            if obj is None:
+                return None
+            if isinstance(obj, np.ndarray):
+                return scrub(obj.tolist())
+            if isinstance(obj, np.generic):
+                return obj.item()
+            if hasattr(obj, "to_dict"):
+                return scrub(obj.to_dict())  # DataFrame -> Dict
+            if isinstance(obj, dict):
+                return {k: scrub(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [scrub(v) for v in obj]
+            return obj
+
+        # Сериализуем графики Plotly в JSON
+        def plot_to_json(fig):
+            if fig is None:
+                return None
+            try:
+                return scrub(fig.to_plotly_json())  # Чистим данные графика!
+            except Exception:
+                return None
+
+        # Генерируем predictions
+        predictions = []
+        model_name = result.model_name or "RF"
+        if result.last_y_pred is not None and analyzer.last_X_test is not None:
+            model = analyzer.trainer.models.get(model_name)
+            if model and hasattr(model, "predict_proba"):
+                # Обернём X_test в DataFrame с именами колонок
+                X_test_df = pd.DataFrame(analyzer.last_X_test, columns=result.selected_features or None)
+                proba = model.predict_proba(X_test_df)[:, 1].tolist()
+                y_pred_list = (
+                    result.last_y_pred if isinstance(result.last_y_pred, list) else result.last_y_pred.tolist()
+                )
+                for i in range(len(y_pred_list)):
+                    predictions.append(
+                        {
+                            "student_index": i,
+                            "prediction": int(y_pred_list[i]),
+                            "probability": round(float(proba[i]), 4),
+                        }
+                    )
+
+        # result — это объект Pydantic (AnalysisResult), обращаемся через точку
+        # Возвращаем СЛОВАРЬ, а не объект модели, чтобы избежать валидации Pydantic
+        return {
+            "status": result.status,
+            "message": result.message,
+            "metrics": scrub(result.metrics),
+            "test_metrics": scrub(result.test_metrics),
+            "cv_results": scrub(result.cv_results),
+            "selected_features": scrub(result.selected_features),
+            "cluster_profiles": scrub(result.cluster_profiles),
+            "explanations": scrub(result.explanations),
+            "predictions": _safe_json_serializable(predictions),
+            # Передаем графики
+            "fig_cm": plot_to_json(result.fig_cm),
+            "fig_roc": plot_to_json(result.fig_roc),
+            "fig_fi": plot_to_json(result.fig_fi),
+            "fig_clusters": plot_to_json(result.fig_clusters),
+            "fig_corr": plot_to_json(result.fig_corr),
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка анализа: {str(e)}")
@@ -95,7 +339,8 @@ async def create_composite(request: CompositeRequest):
         df = pd.DataFrame(request.df)
         df_new, score_name = analyzer.create_composite_score(df, request.feature_weights, request.score_name)
 
-        return {"score_name": score_name, "statistics": df_new[score_name].describe().to_dict()}
+        stats = df_new[score_name].describe()
+        return {"score_name": score_name, "statistics": _safe_json_serializable(stats.to_dict())}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -107,7 +352,32 @@ async def select_subset(request: SubsetRequest):
         subset = analyzer.select_subset(
             df, condition=request.condition, n_samples=request.n_samples, by_cluster=request.by_cluster
         )
-        return {"count": len(subset), "data": subset.to_dict("records")}
+        return {"count": len(subset), "data": _safe_json_serializable(subset.to_dict("records"))}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Комбинации признаков ====================
+
+
+@router.post("/combinations/create")
+async def create_combinations(request: FeatureCombinationRequest):
+    """Создание комбинированных признаков."""
+    try:
+        df = pd.DataFrame(request.df)
+        df_new = create_feature_combinations(
+            df,
+            numerical_cols=request.numerical_cols,
+            text_cols=request.text_cols,
+            max_pairs=request.max_pairs,
+        )
+        new_cols = [c for c in df_new.columns if c not in df.columns]
+        return {
+            "data": _safe_json_serializable(df_new.to_dict("records")),
+            "new_columns": new_cols,
+            "n_new": len(new_cols),
+            "total_columns": len(df_new.columns),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -124,9 +394,9 @@ async def handle_imputation(request: ImputationRequest):
         outliers = detect_outliers(df_clean)
 
         return {
-            "data": df_clean.to_dict("records"),
-            "report": report,
-            "outliers": {k: v for k, v in outliers.items() if v.get("n_outliers", 0) > 0},
+            "data": _safe_json_serializable(df_clean.to_dict("records")),
+            "report": _safe_json_serializable(report),
+            "outliers": _safe_json_serializable({k: v for k, v in outliers.items() if v.get("n_outliers", 0) > 0}),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -142,8 +412,8 @@ async def build_crosstab(request: CrosstabRequest):
         df = pd.DataFrame(request.df)
         result = create_crosstab(df, request.row_var, request.col_var, values=request.values, aggfunc=request.aggfunc)
         return {
-            "table": result["table"].to_dict(),
-            "chi2_test": result.get("chi2_test"),
+            "table": _safe_json_serializable(result["table"].to_dict()),
+            "chi2_test": _safe_json_serializable(result.get("chi2_test")),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -156,8 +426,8 @@ async def build_simple_crosstab(request: CrosstabRequest):
         df = pd.DataFrame(request.df)
         result = simple_crosstab(df, request.row_var, request.col_var)
         return {
-            "table": result["table"].to_dict(),
-            "chi2_test": result.get("chi2_test"),
+            "table": _safe_json_serializable(result["table"].to_dict()),
+            "chi2_test": _safe_json_serializable(result.get("chi2_test")),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -170,15 +440,39 @@ async def build_simple_crosstab(request: CrosstabRequest):
 async def student_trajectory(request: TrajectoryRequest):
     """Анализ траектории конкретного студента."""
     try:
+        import plotly.express as px
+        import plotly.graph_objects as go
+
         df = pd.DataFrame(request.df)
         result = analyze_student_trajectory(
             df, request.student_id, time_col=request.time_col, value_col=request.value_col
         )
+
+        # Генерируем график траектории
+        student_data = df[df["student_id"] == request.student_id] if "student_id" in df.columns else df
+        fig = px.line(
+            student_data,
+            x=request.time_col,
+            y=request.value_col,
+            title=f"Траектория: студент {request.student_id}",
+            markers=True,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=student_data[request.time_col],
+                y=[result.get("first_value", 0)] * len(student_data),
+                mode="lines",
+                name="Начало",
+                line=dict(dash="dash", color="red"),
+            )
+        )
+
         return {
             "trend": result.get("trend"),
             "status": result.get("status"),
-            "first_value": result.get("first_value"),
-            "last_value": result.get("last_value"),
+            "first_value": _safe_json_serializable(result.get("first_value")),
+            "last_value": _safe_json_serializable(result.get("last_value")),
+            "chart": _safe_json_serializable(fig.to_plotly_json()),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -193,10 +487,10 @@ async def find_negative_dynamics(request: TrajectoryRequest):
             df, student_id_col="student_id", time_col=request.time_col, value_col=request.value_col
         )
         return {
-            "n_students_analyzed": result.get("n_students_analyzed", 0),
+            "n_students_analyzed": _safe_json_serializable(result.get("n_students_analyzed", 0)),
             "at_risk_count": len(result.get("at_risk_students", [])),
-            "risk_percentage": result.get("risk_percentage", 0),
-            "at_risk_students": (
+            "risk_percentage": _safe_json_serializable(result.get("risk_percentage", 0)),
+            "at_risk_students": _safe_json_serializable(
                 result.get("at_risk_students", []).to_dict("records")
                 if isinstance(result.get("at_risk_students"), pd.DataFrame)
                 else result.get("at_risk_students", [])
@@ -210,6 +504,9 @@ async def find_negative_dynamics(request: TrajectoryRequest):
 async def forecast_student(request: ForecastRequest):
     """Прогноз оценок студента на будущие семестры."""
     try:
+        import plotly.express as px
+        import plotly.graph_objects as go
+
         df = pd.DataFrame(request.df)
         result = forecast_grades(
             df,
@@ -218,9 +515,35 @@ async def forecast_student(request: ForecastRequest):
             value_col=request.value_col,
             future_semesters=request.future_semesters,
         )
+
+        # График: история + прогноз
+        student_data = df[df["student_id"] == request.student_id] if "student_id" in df.columns else df
+        fig = px.line(
+            student_data,
+            x=request.time_col,
+            y=request.value_col,
+            title=f"Прогноз: студент {request.student_id}",
+            markers=True,
+        )
+        # Добавляем прогноз пунктиром
+        future_x = result.get("future_semesters", [])
+        future_y = result.get("predictions", [])
+        if future_x and future_y:
+            fig.add_trace(
+                go.Scatter(
+                    x=future_x,
+                    y=future_y,
+                    mode="lines+markers",
+                    name="Прогноз",
+                    line=dict(dash="dash", color="orange"),
+                    marker=dict(size=10),
+                )
+            )
+
         return {
-            "future_semesters": result.get("future_semesters", []),
-            "predictions": result.get("predictions", []),
+            "future_semesters": _safe_json_serializable(result.get("future_semesters", [])),
+            "predictions": _safe_json_serializable(result.get("predictions", [])),
+            "chart": _safe_json_serializable(fig.to_plotly_json()),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -240,16 +563,40 @@ async def check_drift(request: DriftCheckRequest):
         report = detector.detect_drift(cur_df)
 
         return {
-            "overall_drift": report["overall_drift"],
-            "drift_percentage": report["drift_percentage"],
-            "drifted_features": report["drifted_features"],
-            "recommendations": report["recommendations"],
+            "overall_drift": _safe_json_serializable(report["overall_drift"]),
+            "drift_percentage": _safe_json_serializable(report["drift_percentage"]),
+            "drifted_features": _safe_json_serializable(report["drifted_features"]),
+            "recommendations": _safe_json_serializable(report["recommendations"]),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==================== Эксперименты ====================
+
+
+@router.get("/metrics/history")
+async def metrics_history():
+    """История метрик моделей из логов."""
+    import os
+
+    try:
+        from ml_core.config import config as ml_config
+
+        metrics_path = f"{ml_config.LOGS_DIR}/model_metrics.csv"
+        if not os.path.exists(metrics_path):
+            # Попробуем дефолтный путь
+            metrics_path = "logs/model_metrics.csv"
+        if not os.path.exists(metrics_path):
+            return {"metrics": [], "message": "Файл model_metrics.csv не найден"}
+
+        df = pd.read_csv(metrics_path)
+        return {
+            "metrics": _safe_json_serializable(df.to_dict("records")),
+            "total": len(df),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/experiments/save")
@@ -275,7 +622,7 @@ async def list_experiments(limit: int = 20):
         tracker = ExperimentTracker()
         experiments = tracker.list_experiments(limit=limit)
         return {
-            "experiments": experiments.to_dict("records"),
+            "experiments": _safe_json_serializable(experiments.to_dict("records")),
             "total": len(experiments),
         }
     except Exception as e:
