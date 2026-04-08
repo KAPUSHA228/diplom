@@ -187,8 +187,8 @@ def correlation_analysis_enhanced(df, feature_cols, target_col, corr_threshold=0
     """
     df = df.copy()
 
-    # Оставляем только нужные числовые колонки
-    cols = [c for c in feature_cols if c in df.columns] + [target_col]
+    # Оставляем только нужные числовые колонки (исключаем target из feature_cols)
+    cols = [c for c in feature_cols if c in df.columns and c != target_col] + [target_col]
     numeric_df = df[cols].select_dtypes(include=[np.number])
 
     if numeric_df.empty or target_col not in numeric_df.columns:
@@ -227,3 +227,32 @@ def correlation_analysis_enhanced(df, feature_cols, target_col, corr_threshold=0
         "target_correlations": target_corrs,  # Series с отсортированными |corr|
         "strong_correlations": target_corrs[target_corrs > corr_threshold] if corr_threshold > 0 else target_corrs,
     }
+
+
+def plot_corr_heatmap(corr_df, title="Корреляционная матрица"):
+    """
+    Строит Plotly heatmap корреляционной матрицы.
+
+    Args:
+        corr_df: pd.DataFrame — корреляционная матрица (из corr_result["full_matrix"])
+        title: заголовок графика
+
+    Returns:
+        plotly.graph_objects.Figure
+    """
+    import plotly.express as px
+
+    # Убираем target из матрицы если он есть (он будет отдельной диагональю)
+    fig = px.imshow(
+        corr_df,
+        text_auto=".2f",
+        color_continuous_scale="RdBu_r",
+        zmin=-1,
+        zmax=1,
+        title=title,
+    )
+    fig.update_layout(
+        height=400 + len(corr_df) * 20,
+        width=400 + len(corr_df.columns) * 20,
+    )
+    return fig

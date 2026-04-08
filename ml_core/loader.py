@@ -4,7 +4,6 @@
 """
 
 import pandas as pd
-import numpy as np
 
 SHEET_TYPE_PATTERNS = {
     "category1_numeric": {  # Вильямс, Шварц, Триандис, соц14
@@ -164,24 +163,126 @@ def detect_sheet_type(sheet_name: str) -> str:
     return "unknown"
 
 
-def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None) -> tuple:
+def get_sheet_preview(file_path: str, sheet_name: str) -> dict:
     """
-    Предобработка одного листа Excel: удаление пустых строк/колонок,
-    поиск колонки пользователя, числовая конвертация, заполнение пропусков.
+    Анализирует лист Excel и возвращает структуру для UI-маппинга.
+    Определяет типы колонок и уникальные значения для строковых данных.
+    """
+    print(f"DEBUG get_sheet_preview: file_path={file_path}, sheet_name='{sheet_name}'")
 
-    Args:
-        df: DataFrame с данными листа
-        sheet_group: группа листа (из detect_sheet_group)
-        sheet_name: опционально, имя листа
+    df = pd.read_excel(file_path, sheet_name=sheet_name)
+    print(f"DEBUG get_sheet_preview: загружен DataFrame с колонками: {list(df.columns)[:5]}...")
 
-    Returns:
-        (df_processed, message): обработанный DataFrame и сообщение
+    # Базовая очистка (как в preprocess_sheet)
+    df = df.dropna(how="all").dropna(axis=1, how="all")
+
+    # Удаляем Unnamed колонки из анализа
+    df = df.loc[:, ~df.columns.str.startswith("Unnamed")]
+
+    sheet_type = detect_sheet_type_by_columns(df.columns, sheet_name)
+
+    # Если это мусор, то и превью не нужно
+    if sheet_type == "category2_mednik":  # Используем имя ключа паттерна
+        group = "skip"
+    else:
+        # Определяем группу более точно по содержимому, если паттерн не сработал
+        group = detect_sheet_group(df.columns, sheet_name)
+        if group == "unknown":
+            # Эвристика: если много строк с разделителями - это multiple_choice
+            text_cols = df.select_dtypes(include=["object"]).columns
+            if text_cols.any():
+                sample = df[text_cols].dropna().head(5).to_string()
+                if any(sep in sample for sep in [";", ","]):
+                    group = "multiple_choice"
+                else:
+                    group = "single_choice"
+            else:
+                group = "numeric"
+
+    # Служебные колонки (PII) — исключаем из превью полностью (и колонку, и данные)
+    # Все в нижнем регистре для сравнения с col.strip().lower()
+    SERVICE_COLS = {
+        "user",
+        "user_id",
+        "vk_id",
+        "vk id",
+        "vk",
+        "фамилия",
+        "имя",
+        "отчество",
+        "вуз",
+        "факультет",
+        "группа",
+        "курс",
+        "пол",
+        "возраст",
+        "дата",
+        "date",
+        "направление подготовки",
+        "_source_sheet",
+        "_sheet_type",
+    }
+
+    cols_info = []
+    for col in df.columns:
+        col_clean = col.strip().lower()
+        is_service = col_clean in SERVICE_COLS
+        print(f"DEBUG preview: колонка='{col}' -> clean='{col_clean}' -> service={is_service}")
+        if is_service:
+            continue  # Полностью пропускаем колонку
+
+        col_info = {"name": col, "dtype": str(df[col].dtype)}
+
+        # Если строка - собираем уникальные значения
+        if df[col].dtype == "object":
+            # Для multiple_choice разбиваем значения
+            if group == "multiple_choice":
+                all_values = set()
+                separators = [";", ","]
+                for val in df[col].dropna().unique():
+                    val_str = str(val)
+                    split_val = [val_str]
+                    for sep in separators:
+                        if sep in val_str:
+                            split_val = [v.strip() for v in val_str.split(sep)]
+                            break
+                    all_values.update(split_val)
+                col_info["unique_values"] = sorted(str(v) for v in all_values)
+            else:
+                # Для single_choice просто уникальные (приводим к str для безопасной сортировки)
+                vals = [str(v) for v in df[col].dropna().unique()]
+                col_info["unique_values"] = sorted(set(vals))
+
+        cols_info.append(col_info)
+
+    # Человекочитаемое имя категории
+    group_labels = {
+        "numeric": "📊 Числовые данные",
+        "single_choice": "📝 Одиночный выбор",
+        "multiple_choice": "☑️ Множественный выбор",
+        "skip": "🗑️ Свободные ответы (скип)",
+        "unknown": "❓ Не определено",
+    }
+
+    return {
+        "sheet_name": sheet_name,
+        "detected_group": group,
+        "group_label": group_labels.get(group, "❓ Не определено"),
+        "columns": cols_info,
+    }
+
+
+def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None, mapping_config: dict = None) -> tuple:
+    """
+    Предобработка одного листа Excel.
+    mapping_config: словарь настроек от пользователя {col_name: {type: ..., map: ...}}
     """
     df = df.copy()
     message = f"Лист '{sheet_name}' → группа: {sheet_group}"
 
     # Базовая очистка
     df = df.dropna(how="all").dropna(axis=1, how="all")
+    df = df.loc[:, ~df.columns.str.startswith("Unnamed")]
 
     # Поиск user_col
     user_col = next((col for col in ["user", "user_id", "VK_id", "VK", "student_id"] if col in df.columns), None)
@@ -189,39 +290,71 @@ def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None)
         df["user_id"] = range(len(df))
         user_col = "user_id"
 
-    # Обработка по группе
-    if sheet_group == "numeric":
-        for col in df.columns:
-            if col not in [user_col, "дата", "Дата"]:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+    # Применяем обработку колонок
+    processed_cols = set()
 
-    elif sheet_group == "single_choice":
-        for col in df.columns:
-            if col not in [user_col, "дата", "Дата"]:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+    # 1. Применяем пользовательский конфиг, если есть
+    if mapping_config:
+        message += " (пользовательская настройка)"
+        for col_name, config in mapping_config.items():
+            if col_name not in df.columns:
+                continue
 
-    elif sheet_group == "multiple_choice":
-        text_cols = df.select_dtypes(include=["object"]).columns.tolist()
-        for col in text_cols:
-            if col not in [user_col, "дата", "Дата"]:
-                prefix = f"{sheet_name.replace(' ', '_')}_" if sheet_name else ""
-                df = process_multiple_choice_column(df, col, prefix=prefix)
-        message += " (multiple choice → one-hot encoding)"
+            processed_cols.add(col_name)
+            col_type = config.get("type")
 
-    elif sheet_group == "skip":
+            if col_type == "one_hot":
+                dummies = pd.get_dummies(df[col_name], prefix=col_name)
+                df = pd.concat([df, dummies], axis=1)
+                df = df.drop(columns=[col_name])
+
+            elif col_type == "ordinal":
+                val_map = config.get("map", {})
+                df[col_name] = df[col_name].map(val_map).fillna(0).astype(int)
+
+            elif col_type == "split":
+                sep = config.get("separator", ",")
+
+                def split_and_strip(text):
+                    if pd.isna(text):
+                        return []
+                    return [x.strip() for x in str(text).split(sep) if x.strip()]
+
+                all_tags = set()
+                for val in df[col_name]:
+                    all_tags.update(split_and_strip(val))
+
+                for tag in all_tags:
+                    clean_tag = tag.replace(" ", "_").replace("–", "_").replace("-", "_")
+                    new_col = f"{col_name}_{clean_tag}"
+                    df[new_col] = df[col_name].apply(lambda x: 1 if tag in split_and_strip(x) else 0)
+                df = df.drop(columns=[col_name])
+
+    # 2. Стандартная обработка для остальных колонок
+    for col in df.columns:
+        if col in processed_cols or col in [user_col]:
+            continue
+
+        # Удаление дат
+        if "дата" in str(col).lower() or "date" in str(col).lower():
+            df = df.drop(columns=[col])
+            continue
+
+        if sheet_group == "multiple_choice" and df[col].dtype == "object":
+            # Авто-разбиение для множественного выбора
+            prefix = f"{sheet_name.replace(' ', '_')}_" if sheet_name else ""
+            df = process_multiple_choice_column(df, col, prefix=prefix)
+        else:
+            # Попытка привести к числу
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Если пропуск
+    if sheet_group == "skip" and not mapping_config:
         message += " → пропущен"
         return pd.DataFrame(), message
 
-    # Заполнение пропусков
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
-    if len(numeric_cols) > 0:
-        df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
-
-    # Удаление дат
-    for col in list(df.columns):
-        if "дата" in str(col).lower() or "date" in str(col).lower():
-            df = df.drop(columns=[col])
-
+    # Пропуски НЕ заполняем автоматически — пользователь выберет стратегию в DataEnrichment
+    # Только удаляем дубликаты колонок
     df = df.loc[:, ~df.columns.duplicated()]
 
     return df, message

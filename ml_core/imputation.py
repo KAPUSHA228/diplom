@@ -19,6 +19,12 @@ def handle_missing_values(df, strategy="auto", threshold=30):
         (df_clean, report): обработанный DataFrame и dict-отчёт о действиях
     """
     df = df.copy()
+
+    # Нормализация: пустые строки и строки с пробелами → NaN
+    for col in df.columns:
+        if df[col].dtype == "object":
+            df[col] = df[col].replace(r"^\s*$", np.nan, regex=True)
+
     df_clean = df.copy()
     report = {"original_shape": df.shape, "missing_before": df.isna().sum().sum(), "actions": []}
 

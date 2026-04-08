@@ -71,6 +71,7 @@ class AnalysisResult(BaseModel):
     fig_roc: Optional[Any] = None  # ROC-кривые
     fig_fi: Optional[Any] = None  # Feature Importance
     fig_clusters: Optional[Any] = None  # PCA кластеры
+    fig_corr: Optional[Any] = None  # Correlation heatmap
 
     # Дополнительные данные для UI
     last_y_test: Optional[List] = None
