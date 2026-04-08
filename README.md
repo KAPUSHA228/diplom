@@ -2,7 +2,7 @@
 
 Интерактивная платформа для **сбора, обработки, анализа и визуализации** данных о студентах (успеваемость, анкеты, психометрика, опросники) с применением **классических и ансамблевых моделей машинного обучения**, **объяснимости (SHAP)** и **мониторинга дрейфа данных**.
 
-Основной пользовательский интерфейс — **`app.py` (Streamlit)**. Архитектура поддерживает как standalone-режим, так и микросервисное развёртывание через **FastAPI + Redis RQ + Docker**.
+Основной пользовательский интерфейс — **React MFE** (фронтенд) + **Streamlit** (`app.py`, legacy). Архитектура поддерживает как standalone-режим, так и микросервисное развёртывание через **FastAPI + Redis RQ + Docker**.
 
 ---
 
@@ -26,7 +26,13 @@
 ### Загрузка данных
 - **Синтетические наборы** по 7 категориям: успеваемость (`grades`), психология (`psychology`), креативность (`creativity`), ценности (`values`), личность (`personality`), активность (`activities`), карьера (`career`)
 - **CSV** с произвольными признаками и целевой переменной (`risk_flag` / `target`)
-- **Excel** с многлистовыми опросниками (Вильямс, Шварц, социодемография и др.) через автоматическое определение типа листа и объединение по `user_id`
+- **Excel** с многлистовыми опросниками через автоматическое определение типа листа и объединение по `user_id`
+- **Smart Excel Mapping** (React): интерактивная настройка обработки текстовых данных
+  - Автоопределение 4 категорий листов: `numeric`, `single_choice`, `multiple_choice`, `skip`
+  - **Ordinal Encoding**: пользователь задаёт числовую ценность для строковых значений (например, "Низкая"→1, "Высокая"→3)
+  - **One-Hot Encoding**: разбиение категориальных признаков на бинарные колонки
+  - **Split (Multiple Choice)**: разделение колонки с несколькими ответами через разделитель (`,` или `;`) на 0/1-признаки
+  - Предпросмотр уникальных значений для каждой строковой колонки перед обработкой
 
 ### Предобработка и feature engineering
 - **Композитные признаки**: `trend_grades`, `grade_stability`, `cognitive_load`, `overall_satisfaction`, `psychological_wellbeing`, `academic_activity`
@@ -38,47 +44,74 @@
 - **Текстовые признаки**: длина, количество слов, сложность текста
 
 ### Аналитика
-- **Корреляционный анализ**: расширенная матрица с отбором сильных корреляций (≥ порога), топ корреляций с target, Plotly heatmap
-- **K-means кластеризация**: профили кластеров (средние значения, размеры, проценты), PCA-визуализация (2D через Plotly и Matplotlib)
-- **Кросс-таблицы**: сводные таблицы, χ²-тест, heatmap, stacked bar chart, экспорт в CSV/Excel
+- **Корреляционный анализ**: расширенная матрица с отбором сильных корреляций (≥ порога), топ корреляций с target, Plotly heatmap. Поддержка Excel с автовыбором листа.
+- **K-means кластеризация**: профили кластеров (средние значения, размеры, проценты), PCA-визуализация (2D через Plotly)
+- **Кросс-таблицы**: сводные таблицы, χ²-тест, heatmap, stacked bar chart, экспорт в CSV
 - **Временные ряды**: траектории студентов (линейный тренд → improving/declining/stable), анализ когорт, детекция негативной динамики, прогноз оценок (линейная экстраполяция)
+- **Визуализация результатов анализа** (React):
+  - ROC-кривые для всех включённых моделей (LR, RF, XGB)
+  - Confusion Matrix
+  - Feature Importance (важность признаков)
+  - PCA-график кластеризации
+  - Таблица кросс-валидации (F1 mean ± std)
+  - **Экспорт результатов** в CSV: SHAP-объяснения, профили кластеров
 
 ### Модели машинного обучения
 - **Logistic Regression**, **Random Forest**, **XGBoost**
+- **Настраиваемый выбор моделей** (React-сайдбар): пользователь включает/отключает конкретные модели (LR, RF, XGB) — обучение и ROC строятся только для выбранных
 - **Кросс-валидация** (StratifiedKFold, 5 folds) по F1-score
-- **RandomizedSearchCV** для XGBoost (n_estimators, max_depth, learning_rate, subsample, colsample_bytree)
+- **RandomizedSearchCV** для XGBoost (n_estimators, max_depth, learning_rate, subsample, colsample_bytree) — опционально через чекбокс «Оптимизация гиперпараметров»
+- **Настраиваемая метрика оптимизации**: F1, ROC-AUC, Precision, Recall (выбор в сайдбаре)
 - **Отбор признаков**: комбинация ANOVA F-value + Random Forest importance; mutual_info_classif + RFE
+- **Слайдер «Число признаков в финальной модели»** (React): от 3 до 15
 - **Метрики**: F1, Precision, Recall, ROC-AUC
 - **Визуализация**: ROC-кривые, Confusion Matrix, Feature Importance (Plotly)
 
 ### Объяснимость (SHAP)
 - **TreeExplainer** для XGBoost/RandomForest, **LinearExplainer** для линейных моделей
 - Summary plot, текстовые объяснения для топ-N студентов
+- **Настраиваемое число факторов** (слайдер `shap_top_n`, от 3 до 10)
 - Детальные объяснения с рекомендациями для конкретного наблюдения
 - Batch-объяснения для студентов с наибольшим риском
+- **Экспорт SHAP-объяснений в CSV** (React-фронтенд)
 
 ### Мониторинг
 - **Дрейф данных**: KS-тест для числовых признаков, χ² для категориальных; отчёт с процентом дрейфа, списком признаков, рекомендациями, оценкой качества данных
 - **Фоновый мониторинг**: `DriftMonitorThread` (периодическая проверка), `DriftMonitorScheduler` (несколько моделей)
 - **Логирование**: события ML (`ml_events.log`), история метрик моделей (`model_metrics.csv`)
 
-### LLM (опционально)
-- **YandexGPT** (реализовано) и **GigaChat** (заглушка)
+### LLM (наброски)
+- **YandexGPT** (нету) и **GigaChat** (заглушка)
 - Интерпретация кластеров, анализ текстовых ответов, генерация отчётов, ответы на вопросы по данным
 
 ---
 
 ## Архитектура проекта
 
-Проект поддерживает **два режима работы**:
+Проект поддерживает **три режима работы**:
 
-### Режим 1: Standalone (Streamlit)
+### Режим 1: Standalone (Streamlit, legacy)
 ```
 app.py → ml_core → файлы/модели/логи
 ```
 Всё в одном процессе. Подходит для локального анализа и прототипирования.
 
-### Режим 2: Микросервисный (Docker)
+### Режим 2: React MFE + FastAPI (основной)
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   Frontend   │────▶│  FastAPI API │────▶│   ml_core    │
+│  (React+Vite)│     │  (uvicorn)   │     │  (Python)    │
+└──────────────┘     └──────────────┘     └──────────────┘
+```
+- **Frontend**: React + Vite + Plotly, роутинг через HashRouter, тёмная/светлая тема
+- **API**: FastAPI с эндпоинтами анализа, Excel Mapping, экспорта
+- **Ключевые компоненты React**:
+  - `MainPage` — загрузка данных, выбор цели, запуск анализа
+  - `AnalysisSidebar` — настройки кластеров, моделей, SMOTE, тюнинга
+  - `SheetMapper` — интерактивный маппинг строковых колонок Excel (Ordinal/One-Hot/Split)
+  - `AnalysisResults` — визуализация метрик, CV, графиков, SHAP, экспорт CSV
+
+### Режим 3: Микросервисный (Docker)
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
 │   Frontend   │────▶│  FastAPI API │────▶│  RQ Worker   │
@@ -101,9 +134,10 @@ app.py → ml_core → файлы/модели/логи
 
 | Путь | Назначение |
 |------|------------|
-| **`app.py`** | Streamlit-приложение: сайдбар, пайплайн анализа, визуализация, мониторинг дрейфа, экспорт |
+| **`app.py`** | Streamlit-приложение (legacy): сайдбар, пайплайн анализа, визуализация, мониторинг дрейфа, экспорт |
+| **`frontend/`** | React MFE: App.jsx, компоненты (AnalysisSidebar, AnalysisResults, SheetMapper, Imputation, Crosstab, TimeSeries, DriftCheck, CompositeScore, Experiments) |
 | **`ml_core/`** | Ядро ML-системы (22 модуля, см. ниже) |
-| **`api/`** | FastAPI бэкенд: роутеры, Pydantic-схемы |
+| **`api/`** | FastAPI бэкенд: роутеры, Pydantic-схемы, Excel Mapping эндпоинты |
 | **`workers/`** | Фоновые задачи RQ (обучение, SHAP) |
 | **`config/`** | Настройки проекта: пути, константы, URL БД/Redis |
 | **`monitoring/`** | Пакет-заглушка (мониторинг перенесён в `ml_core/drift_detector.py`) |
@@ -122,7 +156,7 @@ app.py → ml_core → файлы/модели/логи
 | Модуль | Назначение |
 |--------|------------|
 | **`data.py`** | Генерация синтетических данных (7 категорий), загрузка CSV, подготовка train/test split, генерация temporal-данных с динамикой по семестрам |
-| **`loader.py`** | Парсинг многлистовых Excel: автоопределение типа листа (Вильямс, Шварц, демография и др.), объединение по `user_id` |
+| **`loader.py`** | Парсинг многлистовых Excel: автоопределение типа листа (Вильямс, Шварц, демография и др.), объединение по `user_id`, **Smart Excel Mapping** (`get_sheet_preview`, `preprocess_sheet` с `mapping_config`) |
 | **`features.py`** | Композитные признаки, отбор признаков (F-value + RF, MI + RFE), SMOTE, комбинации признаков, композитный скоринг |
 | **`imputation.py`** | Обработка пропусков (5 стратегий + auto), детекция выбросов (IQR, Z-score) |
 | **`text_processor.py`** | Извлечение признаков из текстовых столбцов (длина, слова, сложность) |
@@ -154,11 +188,11 @@ app.py → ml_core → файлы/модели/логи
 
 ### Конфигурация и схемы
 
-| Модуль | Назначение |
-|--------|------------|
+| Модуль | Назначение                                                                                                                                  |
+|--------|---------------------------------------------------------------------------------------------------------------------------------------------|
 | **`config.py`** | `Config` — пути (`DATA_DIR`, `MODELS_DIR`, `LOGS_DIR`, `EXPERIMENTS_DIR`), константы (`RANDOM_SEED`, `CV_FOLDS`, `TEST_SIZE`, `SHAP_TOP_N`) |
-| **`schemas.py`** | Pydantic-модели: `AnalysisRequest`, `AnalysisResult`, `CompositeScoreRequest`, `TrajectoryRequest` |
-| **`llm_interface.py`** | `LLMInterface` — YandexGPT (реализовано), GigaChat (заглушка); интерпретация кластеров, отчёты, Q&A |
+| **`schemas.py`** | Pydantic-модели: `AnalysisRequest`, `AnalysisResult`, `CompositeScoreRequest`, `TrajectoryRequest`                                          |
+| **`llm_interface.py`** | `LLMInterface` — YandexGPT (нету), GigaChat (заглушка); интерпретация кластеров, отчёты, Q&A                                                |
 
 ### Вспомогательные модули
 
@@ -173,15 +207,18 @@ app.py → ml_core → файлы/модели/логи
 
 ### FastAPI (`api/`)
 
-Роутер: `prefix="/api/analyze"`
-
 | Эндпоинт | Метод | Запрос | Ответ | Описание |
 |----------|-------|--------|-------|----------|
-| `/api/analyze/full` | POST | `AnalysisRequest` (JSON с массивом записей) | `AnalysisResponse` | Полный пайплайн: признаки → кластеры → модели → SHAP → графики |
-| `/api/analyze/composite/create` | POST | `CompositeRequest` (df + веса признаков) | `{score_name, statistics}` | Создание композитного скоринга |
-| `/api/analyze/subset/select` | POST | `SubsetRequest` (df + условие/семплирование) | `{count, data}` | Выборка подмножества данных |
+| `/api/v1/analyze/full` | POST | `AnalysisRequest` (JSON с массивом записей + настройки моделей) | `dict` (метрики, CV, графики Plotly, SHAP) | Полный пайплайн: признаки → кластеры → модели → SHAP → графики |
+| `/api/v1/analyze/composite/create` | POST | `CompositeRequest` (df + веса признаков) | `{score_name, statistics}` | Создание композитного скоринга |
+| `/api/v1/analyze/subset/select` | POST | `SubsetRequest` (df + условие/семплирование) | `{count, data}` | Выборка подмножества данных |
+| `/api/v1/analyze/excel/preview` | POST | `UploadFile` + `sheet_name` | `{detected_group, columns, unique_values}` | Превью листа Excel для SheetMapper (типы колонок, уникальные значения) |
+| `/api/v1/analyze/excel/process` | POST | `UploadFile` + `sheet_name` + `sheet_group` + `mapping_config` | `{data, message, rows}` | Обработка листа Excel с пользовательским маппингом (Ordinal/One-Hot/Split) |
+| `/api/v1/ml/correlation` | POST | `UploadFile` + `sheet_name` | `{correlation_matrix, n_rows, n_columns}` | Быстрая корреляция с поддержкой Excel |
+| `/api/v1/ml/train` | POST | `UploadFile` | `{task_id, status}` | Фоновое обучение модели (RQ) |
+| `/api/v1/ml/shap` | POST | `UploadFile` + `model_id` | `{task_id, status}` | Фоновый расчёт SHAP (RQ) |
 
-> **Примечание:** `api/main.py` закомментирован. Для запуска API необходимо раскомментировать `main.py` и подключить роутер через `app.include_router()`.
+**Сериализация:** Все ответы проходят через рекурсивную функцию `scrub()`, которая преобразует NumPy/Pandas-типы (`ndarray`, `DataFrame`, `np.float64`) в чистый JSON-совместимый Python (`list`, `dict`, `float`). Графики Plotly сериализуются через `fig.to_plotly_json()` с последующей очисткой.
 
 ### Фоновые задачи RQ (`workers/tasks.py`)
 
@@ -224,16 +261,32 @@ app.py → ml_core → файлы/модели/логи
 
 ### Требования
 - Python **3.10+** (рекомендуется 3.11)
+- Node.js **18+** и npm (для React-фронтенда)
 
-### Standalone (Streamlit)
+### React MFE + FastAPI (основной режим)
 
+**Бэкенд:**
 ```bash
 python -m venv .venv
 .venv\Scripts\activate   # Windows
 pip install -r requirements.txt
+uvicorn api.main:app --reload
+```
+Откройте `http://localhost:8000/docs` для Swagger UI.
+
+**Фронтенд:**
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Откройте `http://localhost:5173`.
+
+### Standalone (Streamlit, legacy)
+
+```bash
 streamlit run app.py
 ```
-
 Откройте `http://localhost:8501`.
 
 ### Микросервисное развёртывание (Docker)
@@ -259,8 +312,22 @@ docker build -t ml-frontend -f Dockerfile.frontend .
 
 ### Excel (опросники)
 - Листы с ключевыми словами: `williams`, `schwartz`, `demographics`, `personality`, `grades`, `career` и др.
+- **Smart Excel Mapping** (React):
+  1. Загрузка файла → автопревью листа (`/api/v1/analyze/excel/preview`)
+  2. Если найдены строковые колонки — появляется компонент `SheetMapper`
+  3. Пользователь выбирает тип обработки для каждой колонки:
+     - **Ordinal** (Порядковый): задаёт числовую ценность вручную (например, "Низкая"=1, "Средняя"=2, "Высокая"=3)
+     - **One-Hot** (Бинарный): создаёт отдельные 0/1-колонки для каждого уникального значения
+     - **Split** (Множественный выбор): разбивает колонку с разделителями (`;` или `,`) на бинарные признаки
+     - **Пропустить**: исключает колонку из анализа
+  4. Нажатие «Применить» → обработка на бэкенде (`/api/v1/analyze/excel/process`) → данные готовы к анализу
 - Колонка респондента: `user`, `user_id` или `VK_id` (иначе создаётся искусственный `user_id`)
-- Шкалы Лайкерта автоматически приводятся к числовому типу
+- Безымянные колонки (`Unnamed:*`) автоматически удаляются
+- Категории листов (автоопределение):
+  - **`numeric`**: Вильямс, Шварц, Триандис, социодемография (числовые шкалы)
+  - **`single_choice`**: одиночный выбор из списка (например, «Мне нравится работать в команде»)
+  - **`multiple_choice`**: множественный выбор с разделителями (например, «Отметьте соответствующие варианты»)
+  - **`skip`**: мусорные листы, пропускаются при обработке
 
 ### Синтетические данные
 - **7 категорий**: grades, psychology, creativity, values, personality, activities, career
