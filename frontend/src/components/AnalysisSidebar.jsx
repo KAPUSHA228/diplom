@@ -9,7 +9,7 @@ export default function AnalysisSidebar({ onRun, busy, disabled = false }) {
   // Новые настройки (как в Streamlit)
   const [useHpTuning, setUseHpTuning] = useState(false);
   const [nIterTuning, setNIterTuning] = useState(20);
-  const [optimizationMetric, setOptimizationMetric] = useState("f1");
+  const [optimizationMetric, setOptimizationMetric] = useState("default");
   const [nFeatures, setNFeatures] = useState(7);
   const [useLR, setUseLR] = useState(true);
   const [useRF, setUseRF] = useState(true);
@@ -78,12 +78,14 @@ export default function AnalysisSidebar({ onRun, busy, disabled = false }) {
       </label>
 
       <label className="checkbox-label">
+        <div style={{ marginBottom: 4, fontSize: 13, fontWeight: 600 }}>Приоритетная метрика:</div>
         <select value={optimizationMetric} onChange={(e) => setOptimizationMetric(e.target.value)}
           style={{ width: "100%", padding: 4, borderRadius: 4, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }}>
-          <option value="f1">Метрика: F1-score</option>
-          <option value="roc_auc">Метрика: ROC-AUC</option>
-          <option value="precision">Метрика: Precision</option>
-          <option value="recall">Метрика: Recall</option>
+          <option value="default">По умолчанию (F1)</option>
+          <option value="f1">F1-score</option>
+          <option value="roc_auc">ROC-AUC</option>
+          <option value="precision">Precision</option>
+          <option value="recall">Recall</option>
         </select>
       </label>
 

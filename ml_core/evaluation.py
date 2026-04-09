@@ -145,7 +145,14 @@ def plot_feature_importance(model, feature_names, top_n=10):
     return fig
 
 
-def generate_shap_explanations(model, X: pd.DataFrame, feature_names: list, threshold: float = 0.5, top_n: int = 5):
+def generate_shap_explanations(
+    model,
+    X: pd.DataFrame,
+    feature_names: list,
+    threshold: float = 0.5,
+    top_n: int = 5,
+    target_name: str = "Целевая переменная",
+):
     """
     Генерирует SHAP-объяснения для первых 15 наблюдений.
 
@@ -153,8 +160,9 @@ def generate_shap_explanations(model, X: pd.DataFrame, feature_names: list, thre
         model: обученная модель (XGBoost/RF/LogisticRegression)
         X: данные для объяснения (DataFrame)
         feature_names: список имён признаков
-        threshold: порог классификации для определения риска
+        threshold: порог классификации для определения уровня
         top_n: число объяснений для возврата
+        target_name: имя целевой переменной для текстовых объяснений
 
     Returns:
         list[dict]: [{'student_index', 'risk_probability', 'risk_level', 'explanation'}]
@@ -187,17 +195,17 @@ def generate_shap_explanations(model, X: pd.DataFrame, feature_names: list, thre
             explanation = {
                 "student_index": i,
                 "risk_probability": risk_prob,
-                "risk_level": "high" if risk_prob > threshold else "low",
+                "risk_level": "высокое" if risk_prob > threshold else "низкое",
                 "top_features": [
                     {
                         "feature": feat,
                         "shap_value": float(val),
-                        "effect": "увеличивает риск" if val > 0 else "снижает риск",
+                        "effect": f"повышает {target_name}" if val > 0 else f"понижает {target_name}",
                     }
                     for feat, val in feature_effects[:top_n]
                 ],
             }
-            explanation["explanation"] = generate_text_explanation(explanation)
+            explanation["explanation"] = generate_text_explanation(explanation, target_name)
             explanations.append(explanation)
 
         return explanations
@@ -207,21 +215,23 @@ def generate_shap_explanations(model, X: pd.DataFrame, feature_names: list, thre
         return []
 
 
-def generate_text_explanation(exp):
+def generate_text_explanation(exp, target_name="Целевая переменная"):
     """
     Преобразует dict SHAP-объяснения в читаемый текст.
 
     Args:
         exp: dict с ключами 'risk_probability', 'risk_level', 'factors'
+        target_name: имя целевой переменной
 
     Returns:
         str: текстовое объяснение
     """
-    text = f"Риск отчисления: {exp['risk_probability']:.1%} ({exp['risk_level']})\n\n"
+    text = f"Вероятность {target_name}: {exp['risk_probability']:.1%} ({exp['risk_level']})\n\n"
     text += "Основные факторы:\n"
 
     for feat in exp["top_features"]:
-        arrow = "↑" if feat["effect"] == "увеличивает риск" else "↓"
+        # Определяем направление по значению SHAP
+        arrow = "↑" if feat.get("shap_value", 0) > 0 else "↓"
         text += f"• {feat['feature']}: {arrow} ({feat['shap_value']:.3f})\n"
 
     return text

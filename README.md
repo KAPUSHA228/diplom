@@ -1,5 +1,8 @@
 # Система мониторинга академических рисков студентов
 
+[![CI](https://github.com/USER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/USER/REPO/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/USER/REPO/branch/main/graph/badge.svg)](https://codecov.io/gh/USER/REPO)
+
 Интерактивная платформа для **сбора, обработки, анализа и визуализации** данных о студентах (успеваемость, анкеты, психометрика, опросники) с применением **классических и ансамблевых моделей машинного обучения**, **объяснимости (SHAP)** и **мониторинга дрейфа данных**.
 
 Основной пользовательский интерфейс — **React MFE** (фронтенд) + **Streamlit** (`app.py`, legacy). Архитектура поддерживает как standalone-режим, так и микросервисное развёртывание через **FastAPI + Redis RQ + Docker**.

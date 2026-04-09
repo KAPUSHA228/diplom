@@ -3,11 +3,8 @@ import { HashRouter, Routes, Route, Link, useLocation } from "react-router-dom";
 import Plot from "react-plotly.js";
 import * as XLSX from "xlsx";
 import {
-  getTaskStatus,
   healthcheck,
   uploadForCorrelation,
-  uploadForShap,
-  uploadForTrain,
   runFullAnalysis,
   getExcelPreview,
   processExcel,
@@ -69,51 +66,12 @@ function ThemeToggle() {
   );
 }
 
-function PollingTask({ taskId, title }) {
-  const [task, setTask] = useState(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    if (!taskId) return;
-    let stopped = false;
-    const timer = setInterval(async () => {
-      try {
-        const status = await getTaskStatus(taskId);
-        if (!stopped) setTask(status);
-        if (status.status === "completed" || status.status === "failed") clearInterval(timer);
-      } catch (e) {
-        if (!stopped) setError(String(e.message || e));
-        clearInterval(timer);
-      }
-    }, 2000);
-    return () => { stopped = true; clearInterval(timer); };
-  }, [taskId]);
-
-  if (!taskId) return null;
-  return (
-    <div className="card">
-      <h3>{title}</h3>
-      <p><b>Task ID:</b> {taskId}</p>
-      {error ? <p className="error">{error}</p> : null}
-      {task ? (
-        <>
-          <p><b>Статус:</b> {task.status}</p>
-          <p><b>Этап:</b> {task.stage || "-"} | <b>Прогресс:</b> {task.progress ?? 0}%</p>
-          {task.result ? <pre>{JSON.stringify(task.result, null, 2)}</pre> : null}
-          {task.error ? <pre className="error">{task.error}</pre> : null}
-        </>
-      ) : <p>Ожидание обновлений...</p>}
-    </div>
-  );
-}
-
 function MainPage() {
   const shared = useSharedData();
   const [file, setFile] = useState(null);
   const [csvData, setCsvData] = useState(null);
   const [csvPreview, setCsvPreview] = useState({ headers: [], rows: [], rowCount: 0, riskPct: null });
   const [corrResult, setCorrResult] = useState(null);
-  const [trainTaskId, setTrainTaskId] = useState("");
-  const [shapTaskId, setShapTaskId] = useState("");
   const [analysisResult, setAnalysisResult] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -204,23 +162,9 @@ function MainPage() {
     finally { setBusy(false); }
   }
 
-  async function onTrain() {
-    if (!file) return;
-    try { setBusy(true); setError(""); const res = await uploadForTrain(file); setTrainTaskId(res.task_id); }
-    catch (e) { setError(String(e.message || e)); }
-    finally { setBusy(false); }
-  }
-
   async function onCorrelation() {
     if (!file) return;
     try { setBusy(true); setError(""); const res = await uploadForCorrelation(file); setCorrResult(res); }
-    catch (e) { setError(String(e.message || e)); }
-    finally { setBusy(false); }
-  }
-
-  async function onShap() {
-    if (!file) return;
-    try { setBusy(true); setError(""); const res = await uploadForShap(file, "XGB"); setShapTaskId(res.task_id); }
     catch (e) { setError(String(e.message || e)); }
     finally { setBusy(false); }
   }
@@ -229,7 +173,7 @@ function MainPage() {
   function setDataAndPreview(data) {
     const filtered = filterServiceCols(data);
     setCsvData(filtered);
-    shared.updateData(filtered); // Сохраняем в общий dataset
+    shared.updateData(filtered);
     if (filtered && filtered.length > 0) {
       const headers = Object.keys(filtered[0]);
       const previewRows = filtered.slice(0, 5).map(r => headers.map(h => String(r[h] ?? "")));
@@ -509,7 +453,10 @@ function MainPage() {
               <button className="primary" disabled={!targetColumn} onClick={() => setTargetSelected(true)}>
                 ✅ Подтвердить выбор цели
               </button>
-              <button onClick={() => { setCsvData(null); setFile(null); setTargetColumn(""); setTargetSelected(false); setSheetPreview(null); }}>
+              <button onClick={() => {
+                setCsvData(null); setFile(null); setTargetColumn("");
+                setTargetSelected(false); setSheetPreview(null);
+              }}>
                 🔄 Сбросить данные
               </button>
             </div>
@@ -526,7 +473,7 @@ function MainPage() {
           <>
             <div className="card">
               <h2>2) Корреляционный анализ (быстрый)</h2>
-              <button onClick={onCorrelation} disabled={!canRun}>Запустить корреляцию</button>
+              <button onClick={onCorrelation} disabled={!file || busy}>Запустить корреляцию</button>
               {corrResult ? (
                 <>
                   <p>Размер: <b>{corrResult.n_rows}</b> строк × <b>{corrResult.n_columns}</b> колонок</p>
@@ -540,15 +487,6 @@ function MainPage() {
                 </>
               ) : <p className="muted">После запуска появится корреляционная матрица.</p>}
             </div>
-            <div className="card">
-              <h2>3) Асинхронные ML-задачи (RQ)</h2>
-              <div className="row">
-                <button onClick={onTrain} disabled={!canRun}>Обучение (RQ)</button>
-                <button onClick={onShap} disabled={!canRun}>SHAP (RQ)</button>
-              </div>
-            </div>
-            <PollingTask taskId={trainTaskId} title="Обучение модели" />
-            <PollingTask taskId={shapTaskId} title="SHAP объяснения" />
           </>
         )}
       </div>

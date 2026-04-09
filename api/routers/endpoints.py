@@ -210,7 +210,7 @@ class CrosstabRequest(BaseModel):
 
 class TrajectoryRequest(BaseModel):
     df: List[Dict[str, Any]]
-    student_id: Any
+    student_id: Optional[Any] = None  # Опционально: для негативной динамики не нужен
     value_col: str = "avg_grade"
     time_col: str = "semester"
 
@@ -249,6 +249,7 @@ async def full_analysis(request: AnalysisRequest):
             possible = [c for c in num_cols if not any(x in c.lower() for x in exclude)]
             target = possible[0] if possible else num_cols[0]
         # Передаем все параметры, которые пришли от фронтенда
+        print(f"DEBUG full_analysis: n_clusters={request.n_clusters}, target={target}")
         result = analyzer.run_full_analysis(
             df=df,
             target_col=target,
@@ -259,6 +260,7 @@ async def full_analysis(request: AnalysisRequest):
             use_lr=request.use_lr,
             use_rf=request.use_rf,
             use_xgb=request.use_xgb,
+            optimization_metric=request.optimization_metric,
         )
 
         # === АГРЕССИВНАЯ ОЧИСТКА ДАННЫХ ===
@@ -314,6 +316,7 @@ async def full_analysis(request: AnalysisRequest):
         return {
             "status": result.status,
             "message": result.message,
+            "target_col": target,
             "metrics": scrub(result.metrics),
             "test_metrics": scrub(result.test_metrics),
             "cv_results": scrub(result.cv_results),
@@ -339,8 +342,27 @@ async def create_composite(request: CompositeRequest):
         df = pd.DataFrame(request.df)
         df_new, score_name = analyzer.create_composite_score(df, request.feature_weights, request.score_name)
 
+        # 1. Статистика
         stats = df_new[score_name].describe()
-        return {"score_name": score_name, "statistics": _safe_json_serializable(stats.to_dict())}
+
+        # 2. Корреляции с другими числовыми колонками
+        numeric_cols = df_new.select_dtypes(include="number").columns
+        correlations = {}
+        if score_name in df_new.columns:
+            for col in numeric_cols:
+                if col != score_name:
+                    corr = df_new[score_name].corr(df_new[col])
+                    correlations[col] = round(corr, 4) if not pd.isna(corr) else 0
+
+        # 3. Сортируем по абсолютному значению
+        sorted_corrs = dict(sorted(correlations.items(), key=lambda item: abs(item[1]), reverse=True))
+
+        return {
+            "score_name": score_name,
+            "statistics": _safe_json_serializable(stats.to_dict()),
+            "correlations": _safe_json_serializable(sorted_corrs),
+            "values": _safe_json_serializable(df_new[score_name].tolist()),  # Для гистограммы
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -350,7 +372,11 @@ async def select_subset(request: SubsetRequest):
     try:
         df = pd.DataFrame(request.df)
         subset = analyzer.select_subset(
-            df, condition=request.condition, n_samples=request.n_samples, by_cluster=request.by_cluster
+            df,
+            condition=request.condition,
+            n_samples=request.n_samples,
+            by_cluster=request.by_cluster,
+            random_seed=request.random_seed,
         )
         return {"count": len(subset), "data": _safe_json_serializable(subset.to_dict("records"))}
     except Exception as e:
@@ -411,8 +437,12 @@ async def build_crosstab(request: CrosstabRequest):
     try:
         df = pd.DataFrame(request.df)
         result = create_crosstab(df, request.row_var, request.col_var, values=request.values, aggfunc=request.aggfunc)
+        print(f"[Crosstab Backend] table shape: {result['table'].shape}, first 3 rows:\n{result['table'].head(3)}")
+        # Транспонируем: строки должны быть внешними ключами, колонки — внутренними
+        table_dict = result["table"].T.to_dict()
+        print(f"[Crosstab Backend] serialized keys: {list(table_dict.keys())[:3]}...")
         return {
-            "table": _safe_json_serializable(result["table"].to_dict()),
+            "table": _safe_json_serializable(table_dict),
             "chi2_test": _safe_json_serializable(result.get("chi2_test")),
         }
     except Exception as e:
@@ -425,8 +455,9 @@ async def build_simple_crosstab(request: CrosstabRequest):
     try:
         df = pd.DataFrame(request.df)
         result = simple_crosstab(df, request.row_var, request.col_var)
+        table_dict = result["table"].T.to_dict()
         return {
-            "table": _safe_json_serializable(result["table"].to_dict()),
+            "table": _safe_json_serializable(table_dict),
             "chi2_test": _safe_json_serializable(result.get("chi2_test")),
         }
     except Exception as e:

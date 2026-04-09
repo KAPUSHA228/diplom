@@ -2,7 +2,7 @@ from typing import Optional
 import pandas as pd
 from .config import config
 from .features import add_composite_features, build_composite_score, get_base_features, preprocess_data_for_smote
-from .analysis import correlation_analysis_enhanced, cluster_students, analyze_cluster_profiles, plot_corr_heatmap
+from .analysis import correlation_analysis, cluster_students, analyze_cluster_profiles, plot_corr_heatmap
 from .models import ModelTrainer
 from .evaluation import generate_shap_explanations, plot_confusion_matrix, plot_roc_curves, plot_feature_importance
 from .error_handler import safe_execute, logger
@@ -34,6 +34,7 @@ class ResearchAnalyzer:
         use_lr: bool = True,
         use_rf: bool = True,
         use_xgb: bool = True,
+        optimization_metric: Optional[str] = None,
     ) -> AnalysisResult:
         """
         Полный пайплайн АРМ исследователя: текст → композиты → корреляция →
@@ -69,6 +70,7 @@ class ResearchAnalyzer:
                 df[target_col] = (df[target_col] > median_val).astype(int)
                 logger.info(f"Target '{target_col}' бинаризирован по медиане {median_val:.2f}")
 
+            # TODO рудимиент
             if "essay_text" in df.columns:
                 df = extract_text_features(df, "essay_text")
 
@@ -76,7 +78,7 @@ class ResearchAnalyzer:
             all_features = get_base_features(df, is_synthetic=is_synthetic)
 
             corr_result = safe_execute(
-                correlation_analysis_enhanced, df, all_features, target_col, corr_threshold=corr_threshold
+                correlation_analysis, df, all_features, target_col, corr_threshold=corr_threshold
             )
 
             # Генерируем heatmap корреляций
@@ -141,7 +143,9 @@ class ResearchAnalyzer:
             self.trainer.models = active_models
             # ==========================================================
 
-            model, model_name, metrics = self.trainer.train_best_model(X_train, y_train, X_test, y_test)
+            model, model_name, metrics = self.trainer.train_best_model(
+                X_train, y_train, X_test, y_test, scoring=optimization_metric
+            )
 
             # Возвращаем оригинальный набор моделей обратно
             self.trainer.models = original_models_backup
@@ -154,6 +158,7 @@ class ResearchAnalyzer:
                 pd.DataFrame(X_test, columns=all_features),
                 all_features,
                 threshold=risk_threshold,
+                target_name=target_col,
             )
 
             self.last_df = df
@@ -318,7 +323,7 @@ class ResearchAnalyzer:
         df: pd.DataFrame,
         condition: str = None,
         n_samples: int = None,
-        random_state: int = 42,
+        random_seed: int = 42,
         by_cluster: int = None,
     ) -> pd.DataFrame:
         """
@@ -341,7 +346,7 @@ class ResearchAnalyzer:
         elif by_cluster is not None:
             subset = df[df["cluster"] == by_cluster]
         elif n_samples:
-            subset = df.sample(n=min(n_samples, len(df)), random_state=random_state)
+            subset = df.sample(n=min(n_samples, len(df)), random_state=random_seed)
         else:
             subset = df
 

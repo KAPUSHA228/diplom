@@ -14,7 +14,7 @@ from ml_core.error_handler import logger
 
 
 def build_composite_score(
-    df, feature_weights: dict, score_name="custom_score", normalize: bool = True, assign_id: bool = True
+    df, feature_weights: dict, score_name="custom_score", normalize: bool = True
 ) -> tuple[pd.DataFrame, str]:
     """
     Конструктор композитной оценки — взвешенная сумма признаков с нормализацией.
@@ -24,7 +24,6 @@ def build_composite_score(
         feature_weights: dict {имя_признака: вес}, отрицательный вес = обратное влияние
         score_name: имя новой колонки (по умолчанию "custom_score")
         normalize: нормализовать признаки в [0, 1] перед суммированием
-        assign_id: присвоить ID по перцентилям (1-100)
 
     Returns:
         (df, score_name): DataFrame с новой колонкой и имя скоринга
@@ -40,8 +39,6 @@ def build_composite_score(
             score += col * weight
 
     df[score_name] = score
-    if assign_id:
-        df[f"{score_name}_id"] = pd.qcut(df[score_name], q=100, labels=False, duplicates="drop") + 1  # от 1 до 100
     return df, score_name
 
 

@@ -168,11 +168,11 @@ export default function AnalysisResults({ result }) {
       {/* SHAP объяснения */}
       {explanations && explanations.length > 0 && (
         <section className="card">
-          <h2>💡 SHAP объяснения (топ студентов в зоне риска)</h2>
+          <h2>💡 SHAP объяснения (топ студентов: {result.target_col || "Target"})</h2>
           {explanations.slice(0, 5).map((exp, i) => (
             <details key={i} className="shap-exp">
               <summary>
-                Студент #{exp.student_index ?? i} — Риск: {((exp.risk_probability || 0) * 100).toFixed(1)}%
+                Студент #{exp.student_index ?? i} — Вероятность: {((exp.risk_probability || 0) * 100).toFixed(1)}%
               </summary>
               <pre>{exp.explanation}</pre>
             </details>

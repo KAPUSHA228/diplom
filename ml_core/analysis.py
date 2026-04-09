@@ -9,40 +9,66 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
-import seaborn as sns
 import pandas as pd
 from ml_core.error_handler import logger
 from ml_core.config import config  # общая утилита
 
 
 # ---- Корреляционный анализ ----
-def correlation_analysis(df, feature_cols, target_col, output_prefix="corr"):
+
+
+def correlation_analysis(df, feature_cols, target_col, corr_threshold=0.3, output_prefix="corr"):
     """
-    Строит корреляционную матрицу Pearson для выбранных признаков и целевой переменной.
-    Сохраняет CSV и heatmap PNG в ANALYSIS_DATA_DIR.
+    Полный корреляционный анализ: матрица Pearson, strong_matrix (≥ порога),
+    отсортированные |корреляции| с целевой переменной.
 
     Args:
         df: исходный DataFrame
-        feature_cols: список имён признаков для корреляции
+        feature_cols: список имён признаков
         target_col: имя целевой переменной
-        output_prefix: префикс имён файлов (по умолчанию "corr")
+        corr_threshold: порог для отбора сильных корреляций (по умолчанию 0.3)
+        output_prefix: префикс имён файлов
 
     Returns:
-        pd.DataFrame: корреляционная матрица
+        dict: full_matrix, strong_matrix, threshold, target_correlations, strong_correlations
     """
     df = df.copy()
-    cols = feature_cols + [target_col]
-    corr = df[cols].corr()
-    corr.to_csv(config.ANALYSIS_DATA_DIR / f"{output_prefix}_matrix.csv", encoding="utf-8", index=True)
 
-    if sns is not None:
-        plt.figure(figsize=(10, 8))
-        sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", square=True)
-        plt.tight_layout()
-        plt.savefig(config.ANALYSIS_DATA_DIR / f"{output_prefix}_heatmap.png", dpi=200)
-        plt.close()
+    # Исключаем target из feature_cols чтобы не было дублей
+    cols = [c for c in feature_cols if c in df.columns and c != target_col] + [target_col]
+    numeric_df = df[cols].select_dtypes(include=[np.number])
 
-    return corr
+    if numeric_df.empty or target_col not in numeric_df.columns:
+        logger.warning(f"Не найдены числовые колонки для корреляции с {target_col}")
+        return None
+
+    corr = numeric_df.corr()
+
+    # Безопасное извлечение correlations с target
+    target_series = corr[target_col]
+    if isinstance(target_series, pd.DataFrame):
+        target_series = target_series.iloc[:, 0]
+    target_corrs = target_series.abs().sort_values(ascending=False)
+
+    # Фильтрация сильных корреляций
+    strong_corr = corr[abs(corr) >= corr_threshold].dropna(how="all").dropna(how="all", axis=1)
+
+    # Сохранение CSV
+    corr.to_csv(config.ANALYSIS_DATA_DIR / f"{output_prefix}_matrix_full.csv", encoding="utf-8", index=True)
+    if not strong_corr.empty:
+        strong_corr.to_csv(
+            config.ANALYSIS_DATA_DIR / f"{output_prefix}_matrix_strong_{corr_threshold}.csv",
+            encoding="utf-8",
+            index=True,
+        )
+
+    return {
+        "full_matrix": corr,
+        "strong_matrix": strong_corr,
+        "threshold": corr_threshold,
+        "target_correlations": target_corrs,
+        "strong_correlations": target_corrs[target_corrs > corr_threshold] if corr_threshold > 0 else target_corrs,
+    }
 
 
 def cluster_students(df, n_clusters=3, feature_cols=None):
@@ -168,65 +194,6 @@ def plot_clusters_2d(X, cluster_labels, output_path="clusters_2d.png"):
     plt.savefig(output_path, dpi=200)
     plt.close()
     return pca
-
-
-def correlation_analysis_enhanced(df, feature_cols, target_col, corr_threshold=0.3, output_prefix="corr"):
-    """
-    Расширенный корреляционный анализ: полная матрица, сильная матрица (≥ порога),
-    отсортированные |корреляции| с целевой переменной.
-
-    Args:
-        df: исходный DataFrame
-        feature_cols: список имён признаков
-        target_col: имя целевой переменной
-        corr_threshold: порог для отбора сильных корреляций (по умолчанию 0.3)
-        output_prefix: префикс имён файлов
-
-    Returns:
-        dict: full_matrix, strong_matrix, threshold, target_correlations, strong_correlations
-    """
-    df = df.copy()
-
-    # Оставляем только нужные числовые колонки (исключаем target из feature_cols)
-    cols = [c for c in feature_cols if c in df.columns and c != target_col] + [target_col]
-    numeric_df = df[cols].select_dtypes(include=[np.number])
-
-    if numeric_df.empty or target_col not in numeric_df.columns:
-        logger.warning(f"Не найдены числовые колонки для корреляции с {target_col}")
-        return None
-
-    corr = numeric_df.corr()
-
-    # === САМОЕ НАДЁЖНОЕ ИСПРАВЛЕНИЕ ===
-    # Принудительно превращаем в Series
-    target_series = corr[target_col]
-
-    # Если по какой-то причине это DataFrame — берём первый столбец
-    if isinstance(target_series, pd.DataFrame):
-        target_series = target_series.iloc[:, 0]
-
-    # Теперь безопасно сортируем
-    target_corrs = target_series.abs().sort_values(ascending=False)
-
-    # Фильтрация сильных корреляций
-    strong_corr = corr[abs(corr) >= corr_threshold].dropna(how="all").dropna(how="all", axis=1)
-
-    # Сохранение (опционально)
-    corr.to_csv(config.ANALYSIS_DATA_DIR / f"{output_prefix}_matrix_full.csv", encoding="utf-8", index=True)
-    if not strong_corr.empty:
-        strong_corr.to_csv(
-            config.ANALYSIS_DATA_DIR / f"{output_prefix}_matrix_strong_{corr_threshold}.csv",
-            encoding="utf-8",
-            index=True,
-        )
-
-    return {
-        "full_matrix": corr,
-        "strong_matrix": strong_corr,
-        "threshold": corr_threshold,
-        "target_correlations": target_corrs,  # Series с отсортированными |corr|
-        "strong_correlations": target_corrs[target_corrs > corr_threshold] if corr_threshold > 0 else target_corrs,
-    }
 
 
 def plot_corr_heatmap(corr_df, title="Корреляционная матрица"):

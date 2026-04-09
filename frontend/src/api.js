@@ -57,7 +57,7 @@ export async function runFullAnalysis(data, params = {}) {
             use_smote: params.use_smote !== undefined ? params.use_smote : true,
             // Параметры из сайдбара
             use_hp_tuning: params.use_hp_tuning || false,
-            optimization_metric: params.optimization_metric || "f1",
+            optimization_metric: params.optimization_metric !== "default" ? params.optimization_metric : null,
             n_features_to_select: params.n_features_to_select || 7,
             shap_top_n: params.shap_top_n || 5,
             use_lr: params.use_lr !== undefined ? params.use_lr : true,
@@ -77,11 +77,11 @@ export async function createCompositeScore(data, featureWeights, scoreName = "cu
 }
 
 /** Выделение подмножества респондентов */
-export async function selectSubset(data, condition = null, nSamples = null, byCluster = null) {
+export async function selectSubset(data, condition = null, nSamples = null, byCluster = null, randomSeed = null) {
     return request("/api/v1/analyze/subset/select", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ df: data, condition, n_samples: nSamples, by_cluster: byCluster }),
+        body: JSON.stringify({ df: data, condition, n_samples: nSamples, by_cluster: byCluster, random_seed: randomSeed }),
     });
 }
 

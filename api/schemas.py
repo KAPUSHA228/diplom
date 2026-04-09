@@ -14,7 +14,7 @@ class AnalysisRequest(BaseModel):
 
     # Новые поля из React-сайдбара
     use_hp_tuning: bool = False
-    optimization_metric: str = "f1"
+    optimization_metric: Optional[str] = None
     shap_top_n: int = Field(5, ge=1, le=20)
     use_lr: bool = True
     use_rf: bool = True
@@ -36,6 +36,7 @@ class SubsetRequest(BaseModel):
     condition: Optional[str] = None  # pandas query строка
     n_samples: Optional[int] = None
     by_cluster: Optional[int] = None
+    random_seed: Optional[int] = 42
 
 
 class FeatureCombinationRequest(BaseModel):

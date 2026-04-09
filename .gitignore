@@ -17,3 +17,4 @@ frontend/dist/*
 .env.example
 /.pre-commit-cache
 htmlcov/*
+.coverage

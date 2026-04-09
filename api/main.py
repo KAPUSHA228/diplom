@@ -5,12 +5,14 @@ import sys
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.responses import JSONResponse
 from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
 from api.schemas import PredictRequest, PredictResponse, TaskStatus, TrainResponse
 from api.routers.endpoints import router as analyze_router
 from ml_core.analysis import correlation_analysis
 from ml_core.models import ModelTrainer
+import numpy as np
 
 # RQ не работает на Windows (требует fork).
 # На Linux/macOS импортируем, на Windows — заглушки.
@@ -76,6 +78,30 @@ async def predict(request: PredictRequest):
     probability = 0.75
 
     return PredictResponse(prediction=prediction, probability=probability)
+
+
+def _scrub(obj):
+    """Рекурсивная очистка от nan/inf/numpy для JSON."""
+    if obj is None:
+        return None
+    if isinstance(obj, np.ndarray):
+        return _scrub(obj.tolist())
+    if isinstance(obj, (np.floating, np.float64)):
+        val = float(obj)
+        return None if np.isnan(val) or np.isinf(val) else val
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, dict):
+        return {k: _scrub(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_scrub(v) for v in obj]
+    if isinstance(obj, float) and (np.isnan(obj) or np.isinf(obj)):
+        return None
+    if hasattr(obj, "to_dict"):
+        return _scrub(obj.to_dict())
+    return obj
 
 
 @app.post("/api/v1/ml/correlation")
@@ -162,13 +188,14 @@ async def correlation(file: UploadFile = File(...), sheet_name: Optional[str] = 
     if not numeric_cols:
         raise HTTPException(400, f"В файле нет числовых колонок для корреляции. Доступные: {list(df.columns)}")
 
-    # Возвращаем target_col, если он был числовым и мы его случайно выкинули
-    if target_col and target_col in df.select_dtypes(include="number").columns and target_col not in numeric_cols:
-        numeric_cols.append(target_col)
-
-    # Вызываем ml_core
+    # Вызываем ml_core (единая функция)
     final_target = target_col if target_col else numeric_cols[-1]
-    corr = correlation_analysis(df, numeric_cols, final_target)
+    corr_result = correlation_analysis(df, numeric_cols, final_target)
+
+    if not corr_result:
+        raise HTTPException(400, "Не удалось построить корреляционную матрицу")
+
+    corr = corr_result["full_matrix"]
 
     # Генерируем Plotly heatmap
     import plotly.express as px
@@ -183,12 +210,13 @@ async def correlation(file: UploadFile = File(...), sheet_name: Optional[str] = 
     )
     fig.update_layout(height=600, width=800)
 
-    return {
-        "correlation_matrix": corr.to_dict(),
+    response = {
+        "correlation_matrix": _scrub(corr.to_dict()),
         "n_rows": len(df),
         "n_columns": len(df.columns),
-        "heatmap": fig.to_plotly_json(),
+        "heatmap": _scrub(fig.to_plotly_json()),
     }
+    return JSONResponse(content=response)
 
 
 # Подключение к Redis (только на Linux/macOS + если доступен)

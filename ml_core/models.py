@@ -54,21 +54,25 @@ class ModelTrainer:
 
         return results
 
-    def train_best_model(self, X, y, X_test=None, y_test=None):
+    def train_best_model(self, X, y, X_test=None, y_test=None, scoring=None):
         """
-        Выбор лучшей модели по CV F1-score, обучение и оценка на тесте.
+        Выбор лучшей модели по CV, обучение и оценка на тесте.
 
         Args:
             X: обучающие признаки
             y: обучающие метки
             X_test: тестовые признаки (опционально)
             y_test: тестовые метки (опционально)
+            scoring: метрика для выбора лучшей модели (по умолчанию "f1")
 
         Returns:
             (model, model_name, metrics): лучшая модель, имя, метрики
         """
+        # Используем выбранную метрику или дефолт F1
+        score = scoring if scoring else "f1"
+
         # Сначала находим лучшую модель через кросс-валидацию
-        cv_results = self.cross_validate(X, y)
+        cv_results = self.cross_validate(X, y, scoring=score)
         best_model_name = max(cv_results, key=lambda x: cv_results[x]["mean"])
 
         # Обучаем на всех данных

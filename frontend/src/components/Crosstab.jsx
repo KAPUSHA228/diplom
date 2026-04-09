@@ -83,38 +83,89 @@ export default function Crosstab() {
         <>
           <div className="table-wrap" style={{ marginTop: 12 }}>
             <h3>Таблица сопряжённости</h3>
-            <table>
-              <thead><tr><th></th>{Object.keys(result.table).map((c) => <th key={c}>{c}</th>)}</tr></thead>
-              <tbody>
-                {Object.entries(result.table).map(([row, vals]) => (
-                  <tr key={row}><td><b>{row}</b></td>{Object.values(vals).map((v, i) => <td key={i}>{typeof v === "number" ? v.toFixed(2) : v}</td>)}</tr>
-                ))}
-              </tbody>
-            </table>
+            {(() => {
+              // result.table = { "RowName": { "ColName": value, ... }, ... }
+              const rowNames = Object.keys(result.table);
+              const colNames = rowNames.length > 0 ? Object.keys(result.table[rowNames[0]]) : [];
+
+              return (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Строки \ Столцы</th>
+                      {colNames.map((c) => <th key={c}>{c}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rowNames.map((row) => (
+                      <tr key={row}>
+                        <td><b>{row}</b></td>
+                        {colNames.map((col) => (
+                          <td key={col}>{typeof result.table[row]?.[col] === "number" ? result.table[row][col].toFixed(2) : result.table[row]?.[col] ?? "—"}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              );
+            })()}
           </div>
 
-          {/* Heatmap */}
+          {/* Heatmap & Stacked Bar */}
           {(() => {
-            const rows = Object.keys(result.table);
-            const cols = Object.keys(result.table[rows[0]] || {});
-            const z = rows.map(r => cols.map(c => result.table[r][c] ?? 0));
-            return (
-              <div style={{ marginTop: 16 }}>
-                <h3>Heatmap</h3>
-                <Plot data={[{ z, x: cols, y: rows, type: "heatmap", colorscale: "YlOrRd", text: z.map(row => row.map(v => v.toFixed(1))), texttemplate: "%{text}", hovertemplate: "%{y} × %{x}: %{z:.1f}<extra></extra>" }]} layout={{ margin: { l: 100, r: 20, t: 30, b: 60 }, height: 300 + rows.length * 30 }} config={{ responsive: true, displayModeBar: false }} style={{ width: "100%" }} />
-              </div>
-            );
-          })()}
+            const rowNames = Object.keys(result.table);
+            const colNames = rowNames.length > 0 ? Object.keys(result.table[rowNames[0]]) : [];
+            const cleanZ = rowNames.map(r => colNames.map(c => {
+              const v = result.table[r]?.[c];
+              return Number(v) || 0;
+            }));
+            const maxVal = Math.max(...cleanZ.flat(), 1);
 
-          {/* Stacked Bar */}
-          {(() => {
-            const rows = Object.keys(result.table);
-            const cols = Object.keys(result.table[rows[0]] || {});
             return (
-              <div style={{ marginTop: 16 }}>
-                <h3>Stacked Bar</h3>
-                <Plot data={cols.map((col) => ({ name: col, type: "bar", x: rows, y: rows.map(r => result.table[r]?.[col] ?? 0) }))} layout={{ barmode: "stack", margin: { l: 50, r: 20, t: 30, b: 60 }, height: 350, showlegend: true, legend: { orientation: "h", y: -0.3 } }} config={{ responsive: true, displayModeBar: false }} style={{ width: "100%" }} />
-              </div>
+              <>
+                <div style={{ marginTop: 16 }}>
+                  <h3>Heatmap</h3>
+                  <Plot
+                    data={[{
+                      z: cleanZ,
+                      type: "heatmap",
+                      colorscale: "Viridis",
+                      zmin: 0,
+                      zmax: maxVal,
+                    }]}
+                    layout={{
+                      margin: { l: 100, r: 20, t: 30, b: 100 },
+                      height: Math.max(500, rowNames.length * 25),
+                      xaxis: { tickvals: colNames.map((_, i) => i), ticktext: colNames, tickangle: -45 },
+                      yaxis: { tickvals: rowNames.map((_, i) => i), ticktext: rowNames }
+                    }}
+                    config={{ responsive: true, displayModeBar: false }}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+
+                <div style={{ marginTop: 16 }}>
+                  <h3>Stacked Bar</h3>
+                  <Plot
+                    data={colNames.map((col, ci) => ({
+                      name: col,
+                      type: "bar",
+                      x: rowNames.map((_, ri) => ri),
+                      y: cleanZ.map(row => row[ci] || 0),
+                    }))}
+                    layout={{
+                      barmode: "stack",
+                      margin: { l: 50, r: 20, t: 30, b: 80 },
+                      height: 350,
+                      showlegend: true,
+                      legend: { orientation: "h", y: -0.3 },
+                      xaxis: { tickvals: rowNames.map((_, i) => i), ticktext: rowNames, tickangle: -45 },
+                    }}
+                    config={{ responsive: true, displayModeBar: false }}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+              </>
             );
           })()}
         </>

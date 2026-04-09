@@ -37,9 +37,30 @@ export default function SubsetSelect() {
   const [nSamples, setNSamples] = useState(50);
   const [query, setQuery] = useState("");
   const [clusterId, setClusterId] = useState(0);
+  const [randomSeed, setRandomSeed] = useState(42); // По умолчанию фиксированный
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [clusterCount, setClusterCount] = useState(0);
+
+  // Читаем количество кластеров из последнего результата анализа
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("last_analysis_result");
+      const lastAnalysis = raw ? JSON.parse(raw) : null;
+      if (lastAnalysis?.cluster_profiles?.size) {
+        // cluster_profiles = { "Признак1": { "0": ..., "1": ... }, "size": { "0": ..., "1": ... } }
+        // Количество кластеров = количество ключей внутри "size"
+        const count = Object.keys(lastAnalysis.cluster_profiles.size).length;
+        setClusterCount(count);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // Генерируем список доступных кластеров динамически
+  const availableClusters = clusterCount > 0
+    ? Array.from({ length: clusterCount }, (_, i) => i)
+    : [];
 
   const activeData = fileData || sharedData;
 
@@ -66,7 +87,7 @@ export default function SubsetSelect() {
       else if (mode === "query") { if (!query.trim()) { setError("Введите условие"); setBusy(false); return; } condition = query.trim(); }
       else if (mode === "cluster") byCluster = clusterId;
 
-      const res = await selectSubset(activeData, condition, n, byCluster);
+      const res = await selectSubset(activeData, condition, n, byCluster, randomSeed);
       setResult(res);
     } catch (err) { setError("Ошибка: " + err.message); }
     finally { setBusy(false); }
@@ -101,6 +122,15 @@ export default function SubsetSelect() {
           <label><b>Кол-во:</b> {nSamples}
             <input type="range" min="5" max={Math.min(activeData?.length || 500, 500)} step="5" value={nSamples} onChange={e => setNSamples(Number(e.target.value))} style={{ width: "100%", marginTop: 4 }} />
           </label>
+          <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
+            <label style={{ fontSize: 13 }}>Seed:
+              <input type="number" value={randomSeed} onChange={e => setRandomSeed(Number(e.target.value))}
+                style={{ width: 80, marginLeft: 4, padding: 4, borderRadius: 4, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }} />
+            </label>
+            <button type="button" onClick={() => setRandomSeed(Math.floor(Math.random() * 10000))} style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid var(--border)", background: "var(--bg-secondary)", color: "var(--text)", cursor: "pointer" }}>
+              🎲 Рандом
+            </button>
+          </div>
         </div>
       )}
       {mode === "query" && (
@@ -113,14 +143,21 @@ export default function SubsetSelect() {
       {mode === "cluster" && (
         <div style={{ marginBottom: 12 }}>
           <label><b>Кластер:</b>
-            <select value={clusterId} onChange={e => setClusterId(Number(e.target.value))} style={{ width: "100%", marginTop: 4, padding: 8, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }}>
-              {[0,1,2,3,4,5].map(c => <option key={c} value={c}>Кластер {c}</option>)}
-            </select>
+            {availableClusters.length > 0 ? (
+              <select value={clusterId} onChange={e => setClusterId(Number(e.target.value))}
+                style={{ width: "100%", marginTop: 4, padding: 8, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }}>
+                {availableClusters.map(c => <option key={c} value={c}>Кластер {c}</option>)}
+              </select>
+            ) : (
+              <span className="muted" style={{ fontSize: 13 }}> (Сначала запустите анализ на главной)</span>
+            )}
           </label>
         </div>
       )}
 
-      <button className="primary" onClick={onRun} disabled={!activeData || busy}>{busy ? "⏳ ..." : "🚀 Выделить"}</button>
+      <button className="primary" onClick={onRun} disabled={!activeData || busy || (mode === "cluster" && availableClusters.length === 0)}>
+        {busy ? "⏳ ..." : "🚀 Выделить"}
+      </button>
       {error && <p className="error" style={{ marginTop: 8 }}>{error}</p>}
 
       {result && (
