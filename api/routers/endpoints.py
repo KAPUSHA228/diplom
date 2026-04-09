@@ -388,7 +388,7 @@ async def select_subset(request: SubsetRequest):
 
 @router.post("/combinations/create")
 async def create_combinations(request: FeatureCombinationRequest):
-    """Создание комбинированных признаков."""
+    """Создание комбинированных признаков с оценкой важности."""
     try:
         df = pd.DataFrame(request.df)
         df_new = create_feature_combinations(
@@ -398,11 +398,25 @@ async def create_combinations(request: FeatureCombinationRequest):
             max_pairs=request.max_pairs,
         )
         new_cols = [c for c in df_new.columns if c not in df.columns]
+
+        # Умный отбор: корреляция с целевой переменной
+        recommendations = []
+        target = request.target_col
+        if target and target in df_new.columns:
+            for col in new_cols:
+                # Считаем корреляцию Пирсона (автоматически игнорирует NaN)
+                corr = df_new[col].corr(df_new[target])
+                if not pd.isna(corr):
+                    recommendations.append(
+                        {"name": col, "correlation": round(float(corr), 4), "abs_corr": round(abs(float(corr)), 4)}
+                    )
+            # Сортируем по силе связи (по модулю)
+            recommendations.sort(key=lambda x: x["abs_corr"], reverse=True)
+
         return {
             "data": _safe_json_serializable(df_new.to_dict("records")),
             "new_columns": new_cols,
-            "n_new": len(new_cols),
-            "total_columns": len(df_new.columns),
+            "recommendations": recommendations[:5],  # Топ-5 для пользователя
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

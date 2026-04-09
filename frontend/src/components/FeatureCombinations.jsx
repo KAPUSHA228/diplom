@@ -4,120 +4,149 @@ import { createFeatureCombinations } from "../api";
 import { parseFile } from "../utils/parseFile";
 import { useSharedData } from "../hooks/useSharedData";
 
+async function parseFileFull(file) {
+  const isExcel = file.name.endsWith(".xlsx") || file.name.endsWith(".xls");
+  if (isExcel) {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+    return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: null });
+  }
+  const text = await file.text();
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(",").map(h => h.trim());
+  return lines.slice(1).map(line => {
+    const cells = line.split(",").map(c => c.trim());
+    const obj = {};
+    headers.forEach((h, i) => { const v = cells[i] ?? ""; obj[h] = v === "" ? null : (isNaN(v) ? v : Number(v)); });
+    return obj;
+  });
+}
+
 export default function FeatureCombinations() {
-  const { data: sharedData, columns: sharedCols, hasShared } = useSharedData();
+  const { data: sharedData, hasShared, updateData } = useSharedData();
   const [file, setFile] = useState(null);
   const [fileData, setFileData] = useState(null);
   const [numericalCols, setNumericalCols] = useState([]);
   const [textCols, setTextCols] = useState([]);
   const [maxPairs, setMaxPairs] = useState(15);
+  const [targetCol, setTargetCol] = useState("");
+  const [allCols, setAllCols] = useState([]);
+
   const [result, setResult] = useState(null);
+  const [selectedRecs, setSelectedRecs] = useState([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const activeData = fileData || sharedData;
-  const columns = fileData ? Object.keys(fileData[0] || {}) : sharedCols;
+
+  // Авто-загрузка целевой переменной из последнего анализа
+  useEffect(() => {
+    try {
+      const last = JSON.parse(localStorage.getItem("last_analysis_result"));
+      if (last?.target_col) setTargetCol(last.target_col);
+    } catch {}
+  }, []);
 
   useEffect(() => {
-    if (hasShared && !fileData && numericalCols.length === 0 && textCols.length === 0 && activeData?.length) {
-      const first = activeData[0];
-      setNumericalCols(columns.filter(c => typeof first[c] === "number"));
-      setTextCols(columns.filter(c => typeof first[c] === "string"));
+    if (activeData?.length) {
+      const cols = Object.keys(activeData[0]);
+      setAllCols(cols);
+      setNumericalCols(cols.filter(c => typeof activeData[0][c] === "number"));
+      setTextCols(cols.filter(c => typeof activeData[0][c] === "string"));
     }
-  }, [hasShared, fileData, activeData, columns]);
+  }, [activeData]);
 
   async function onFileChange(e) {
     const f = e.target.files?.[0];
     if (!f) return;
     setFile(f); setResult(null); setError("");
     try {
-      const parsed = await parseFile(f);
-      setFileData(parsed?.allData || null);
-      if (parsed?.allData?.length) {
-        const first = parsed.allData[0];
-        const cols = Object.keys(first);
-        setNumericalCols(cols.filter(c => typeof first[c] === "number"));
-        setTextCols(cols.filter(c => typeof first[c] === "string"));
-      }
+      const rows = await parseFileFull(f);
+      setFileData(rows);
     } catch (err) { setError("Ошибка чтения файла: " + err.message); }
   }
 
   async function onRun() {
     if (!activeData) return;
-    setBusy(true); setError(""); setResult(null);
+    setBusy(true); setError(""); setResult(null); setSelectedRecs([]);
     try {
-      const res = await createFeatureCombinations(activeData, numericalCols.length > 0 ? numericalCols : null, textCols.length > 0 ? textCols : null, maxPairs);
+      const res = await createFeatureCombinations(activeData, numericalCols, textCols, maxPairs, targetCol || null);
       setResult(res);
+      // По умолчанию выбираем все рекомендации
+      if (res.recommendations) setSelectedRecs(res.recommendations.map(r => r.name));
     } catch (err) { setError("Ошибка: " + err.message); }
     finally { setBusy(false); }
   }
 
+  async function onAddSelected() {
+    if (!result || !selectedRecs.length) return;
+    try {
+      // Берем только выбранные колонки из полного ответа и добавляем к активным данным
+      const newData = activeData.map((row, idx) => {
+        const newRow = { ...row };
+        selectedRecs.forEach(col => {
+          if (result.data[idx]) newRow[col] = result.data[idx][col];
+        });
+        return newRow;
+      });
+      updateData(newData);
+      if (fileData) setFileData(newData);
+      alert(`✅ Добавлено ${selectedRecs.length} новых признаков!`);
+    } catch (e) { setError("Ошибка сохранения: " + e.message); }
+  }
+
   return (
     <div className="card">
-      <h2>🔗 Объединение признаков</h2>
-      <p className="muted">Создание новых признаков: суммы, разности, отношения, произведения, конкатенации.</p>
+      <h2>🔗 Комбинации признаков (Smart)</h2>
+      <p className="muted">Система найдет комбинации, которые сильнее всего влияют на цель.</p>
 
       <div style={{ marginBottom: 12 }}>
-        {hasShared && !fileData && (
-          <div className="ok" style={{ padding: 8, borderRadius: 6, background: "var(--bg-secondary)", marginBottom: 8 }}>
-            ✅ Данные с главной: <b>{activeData.length} строк</b>, {columns.length} колонок
-          </div>
-        )}
+        {hasShared && !fileData && <div className="ok" style={{ padding: 8, borderRadius: 6, background: "var(--bg-secondary)", marginBottom: 8 }}>✅ Данные с главной: <b>{sharedData.length} строк</b></div>}
         <input type="file" accept=".csv,.xlsx,.xls" onChange={onFileChange} />
       </div>
 
-      {columns.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 12 }}>
-          <div>
-            <label><b>🔢 Числовые:</b></label>
-            <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: 8, marginTop: 4, background: "var(--bg-secondary)" }}>
-              {columns.filter(c => typeof activeData?.[0]?.[c] === "number").map(c => (
-                <label key={c} style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 0", fontSize: 13 }}>
-                  <input type="checkbox" checked={numericalCols.includes(c)} onChange={e => setNumericalCols(p => e.target.checked ? [...p, c] : p.filter(x => x !== c))} />{c}
-                </label>
-              ))}
-            </div>
+      {allCols.length > 0 && (
+        <>
+          <div style={{ marginBottom: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <label><b>Целевая переменная:</b>
+              <select value={targetCol} onChange={e => setTargetCol(e.target.value)}
+                style={{ width: "100%", marginTop: 4, padding: 8, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }}>
+                <option value="">— Не выбрана (генерировать всё) —</option>
+                {allCols.filter(c => typeof activeData[0][c] === "number").map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </label>
+            <label><b>Макс. комбинаций:</b> {maxPairs}
+              <input type="range" min="5" max="50" step="1" value={maxPairs} onChange={e => setMaxPairs(Number(e.target.value))} style={{ width: "100%", marginTop: 4 }} />
+            </label>
           </div>
-          <div>
-            <label><b>📝 Текстовые:</b></label>
-            <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: 8, marginTop: 4, background: "var(--bg-secondary)" }}>
-              {columns.filter(c => typeof activeData?.[0]?.[c] === "string").map(c => (
-                <label key={c} style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 0", fontSize: 13 }}>
-                  <input type="checkbox" checked={textCols.includes(c)} onChange={e => setTextCols(p => e.target.checked ? [...p, c] : p.filter(x => x !== c))} />{c}
-                </label>
-              ))}
-            </div>
-          </div>
-        </div>
+          <button className="primary" onClick={onRun} disabled={!activeData || busy}>{busy ? "⏳ Анализ..." : "🔍 Найти лучшие связи"}</button>
+        </>
       )}
 
-      <div style={{ marginBottom: 12 }}>
-        <label><b>Макс. новых признаков:</b> {maxPairs}
-          <input type="range" min="5" max="50" step="1" value={maxPairs} onChange={e => setMaxPairs(Number(e.target.value))} style={{ width: "100%", marginTop: 4 }} />
-        </label>
-      </div>
-
-      <button className="primary" onClick={onRun} disabled={!activeData || busy}>{busy ? "⏳ Создание..." : "🔗 Создать комбинации"}</button>
       {error && <p className="error" style={{ marginTop: 8 }}>{error}</p>}
 
       {result && (
-        <div style={{ marginTop: 12 }}>
-          <p className="ok">✅ Создано <b>{result.n_new}</b> новых признаков (всего: {result.total_columns})</p>
-          {result.new_columns?.length > 0 && (
-            <details open><summary>Новые колонки ({result.new_columns.length})</summary>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>
-                {result.new_columns.map(c => <span key={c} className="tag" style={{ background: "var(--primary)", color: "#fff", padding: "2px 8px", borderRadius: 12, fontSize: 12 }}>{c}</span>)}
-              </div>
-            </details>
-          )}
-          {result.data?.length > 0 && (
-            <details><summary>Превью (первые 10)</summary>
-              <div className="table-wrap" style={{ marginTop: 8, maxHeight: 400, overflowY: "auto" }}>
-                <table><thead><tr>{Object.keys(result.data[0]).map(h => <th key={h} style={{ fontSize: 11 }}>{h}</th>)}</tr></thead>
-                  <tbody>{result.data.slice(0, 10).map((row, i) => (<tr key={i}>{Object.values(row).map((v, j) => (<td key={j} style={{ fontSize: 11 }}>{v !== null && v !== undefined ? String(v) : ""}</td>))}</tr>))}</tbody></table>
-              </div>
-            </details>
-          )}
+        <div style={{ marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+          <h3>🏆 Рекомендации системы</h3>
+          {result.recommendations?.length > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+              {result.recommendations.map(rec => (
+                <label key={rec.name} style={{ display: "flex", alignItems: "center", gap: 10, padding: 8, borderRadius: 6, background: "var(--bg-secondary)" }}>
+                  <input type="checkbox" checked={selectedRecs.includes(rec.name)}
+                    onChange={e => setSelectedRecs(prev => e.target.checked ? [...prev, rec.name] : prev.filter(x => x !== rec.name))} />
+                  <span style={{ fontWeight: 600 }}>{rec.name}</span>
+                  <span style={{ marginLeft: "auto", color: rec.correlation > 0 ? "#2ecc71" : "#e74c3c", fontWeight: "bold" }}>
+                    r = {rec.correlation > 0 ? "+" : ""}{rec.correlation}
+                  </span>
+                </label>
+              ))}
+            </div>
+          ) : <p className="muted">Сильных связей с целью не найдено.</p>}
+
+          <button onClick={onAddSelected} disabled={!selectedRecs.length} style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: selectedRecs.length ? "var(--primary)" : "#666", color: "#fff", cursor: "pointer" }}>
+            💾 Добавить выбранное в набор данных ({selectedRecs.length})
+          </button>
         </div>
       )}
     </div>

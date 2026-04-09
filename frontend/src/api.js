@@ -86,7 +86,7 @@ export async function selectSubset(data, condition = null, nSamples = null, byCl
 }
 
 /** Создание комбинированных признаков */
-export async function createFeatureCombinations(data, numericalCols, textCols, maxPairs = 15) {
+export async function createFeatureCombinations(data, numericalCols, textCols, maxPairs = 15, targetCol = null) {
     return request("/api/v1/analyze/combinations/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -95,6 +95,7 @@ export async function createFeatureCombinations(data, numericalCols, textCols, m
             numerical_cols: numericalCols,
             text_cols: textCols,
             max_pairs: maxPairs,
+            target_col: targetCol,
         }),
     });
 }

@@ -46,6 +46,7 @@ class FeatureCombinationRequest(BaseModel):
     numerical_cols: Optional[List[str]] = None
     text_cols: Optional[List[str]] = None
     max_pairs: int = 15
+    target_col: Optional[str] = None
 
 
 class AnalysisResponse(BaseModel):
