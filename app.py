@@ -1,3 +1,13 @@
+"""
+⚠️ DEPRECATED — Legacy Streamlit UI
+
+Данное приложение устарело. Основной интерфейс — React MFE (frontend/).
+Файл сохранён для справки и локального анализа.
+Основной режим запуска: React + FastAPI (см. README.md).
+
+Дата перевода на React: Апрель 2026.
+"""
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px

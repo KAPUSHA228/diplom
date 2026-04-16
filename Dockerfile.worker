@@ -13,5 +13,5 @@ COPY . .
 
 RUN mkdir -p models logs/drift_reports experiments analysis_data/synthetic analysis_data/monitoring
 
-# RQ worker слушает очередь Redis
-CMD ["rq", "worker", "--url", "redis://redis:6379/0"]
+# Celery worker слушает очередь Redis
+CMD ["celery", "-A", "celery_app", "worker", "--loglevel=info", "--concurrency=4"]

@@ -15,7 +15,7 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
 
-  # Redis — кэш и очередь RQ
+  # Redis — кэш и брокер сообщений Celery
   redis:
     image: redis:7-alpine
     ports:
@@ -40,7 +40,7 @@ services:
       - ml-logs:/app/logs
       - ml-experiments:/app/experiments
 
-  # RQ Worker — фоновые задачи (обучение, SHAP)
+  # Celery Worker — фоновые задачи (обучение, SHAP)
   ml-worker:
     build:
       context: .

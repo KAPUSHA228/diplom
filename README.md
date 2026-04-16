@@ -1,11 +1,11 @@
 # Система мониторинга академических рисков студентов
 
-[![CI](https://github.com/USER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/USER/REPO/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/USER/REPO/branch/main/graph/badge.svg)](https://codecov.io/gh/USER/REPO)
+[![CI](https://github.com/KAPUSHA228/diplom/actions/workflows/ci.yml/badge.svg)](https://github.com/KAPUSHA228/diplom/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/KAPUSHA228/diplom/branch/main/graph/badge.svg)](https://codecov.io/gh/KAPUSHA228/diplom)
 
 Интерактивная платформа для **сбора, обработки, анализа и визуализации** данных о студентах (успеваемость, анкеты, психометрика, опросники) с применением **классических и ансамблевых моделей машинного обучения**, **объяснимости (SHAP)** и **мониторинга дрейфа данных**.
 
-Основной пользовательский интерфейс — **React MFE** (фронтенд) + **Streamlit** (`app.py`, legacy). Архитектура поддерживает как standalone-режим, так и микросервисное развёртывание через **FastAPI + Redis RQ + Docker**.
+Основной пользовательский интерфейс — **React MFE** (фронтенд) + **Streamlit** (`app.py`, legacy). Архитектура поддерживает как standalone-режим, так и микросервисное развёртывание через **FastAPI + Celery + Redis + Docker**.
 
 ---
 
@@ -117,19 +117,20 @@ app.py → ml_core → файлы/модели/логи
 ### Режим 3: Микросервисный (Docker)
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│   Frontend   │────▶│  FastAPI API │────▶│  RQ Worker   │
-│  (React/Vue) │     │  (uvicorn)   │     │  (Redis RQ)  │
+│   Frontend   │────▶│  FastAPI API │────▶│ Celery Worker│
+│  (React/Vue) │     │  (uvicorn)   │     │  (celery)    │
 └──────────────┘     └──────────────┘     └──────────────┘
                             │                      │
                             ▼                      ▼
                      ┌──────────────┐     ┌──────────────┐
                      │    Redis     │     │  PostgreSQL  │
-                     │  (cache/RQ)  │     │   (БД)       │
+                     │ (broker/cache)│    │   (БД)       │
                      └──────────────┘     └──────────────┘
 ```
 - **API** (`api/`) — FastAPI с эндпоинтами анализа
-- **Worker** (`workers/`) — фоновые задачи через Redis RQ (обучение моделей, SHAP)
+- **Worker** (`workers/`) — фоновые задачи через Celery + Redis (обучение моделей, SHAP)
 - **3 Dockerfile**: `Dockerfile.api`, `Dockerfile.frontend`, `Dockerfile.worker`
+- **docker-compose.yml**: 4 сервиса (nginx, ml-api, ml-worker, redis)
 
 ---
 
@@ -141,7 +142,7 @@ app.py → ml_core → файлы/модели/логи
 | **`frontend/`** | React MFE: App.jsx, компоненты (AnalysisSidebar, AnalysisResults, SheetMapper, Imputation, Crosstab, TimeSeries, DriftCheck, CompositeScore, Experiments) |
 | **`ml_core/`** | Ядро ML-системы (22 модуля, см. ниже) |
 | **`api/`** | FastAPI бэкенд: роутеры, Pydantic-схемы, Excel Mapping эндпоинты |
-| **`workers/`** | Фоновые задачи RQ (обучение, SHAP) |
+| **`workers/`** | Фоновые задачи Celery (обучение, SHAP) |
 | **`config/`** | Настройки проекта: пути, константы, URL БД/Redis |
 | **`monitoring/`** | Пакет-заглушка (мониторинг перенесён в `ml_core/drift_detector.py`) |
 | **`prompts/`** | Шаблоны промптов для LLM (кластеры, отчёты, анализ текста) |
@@ -218,19 +219,19 @@ app.py → ml_core → файлы/модели/логи
 | `/api/v1/analyze/excel/preview` | POST | `UploadFile` + `sheet_name` | `{detected_group, columns, unique_values}` | Превью листа Excel для SheetMapper (типы колонок, уникальные значения) |
 | `/api/v1/analyze/excel/process` | POST | `UploadFile` + `sheet_name` + `sheet_group` + `mapping_config` | `{data, message, rows}` | Обработка листа Excel с пользовательским маппингом (Ordinal/One-Hot/Split) |
 | `/api/v1/ml/correlation` | POST | `UploadFile` + `sheet_name` | `{correlation_matrix, n_rows, n_columns}` | Быстрая корреляция с поддержкой Excel |
-| `/api/v1/ml/train` | POST | `UploadFile` | `{task_id, status}` | Фоновое обучение модели (RQ) |
-| `/api/v1/ml/shap` | POST | `UploadFile` + `model_id` | `{task_id, status}` | Фоновый расчёт SHAP (RQ) |
+| `/api/v1/ml/train` | POST | `UploadFile` | `{task_id, status}` | Фоновое обучение модели (Celery) |
+| `/api/v1/ml/shap` | POST | `UploadFile` + `model_id` | `{task_id, status}` | Фоновый расчёт SHAP (Celery) |
 
 **Сериализация:** Все ответы проходят через рекурсивную функцию `scrub()`, которая преобразует NumPy/Pandas-типы (`ndarray`, `DataFrame`, `np.float64`) в чистый JSON-совместимый Python (`list`, `dict`, `float`). Графики Plotly сериализуются через `fig.to_plotly_json()` с последующей очисткой.
 
-### Фоновые задачи RQ (`workers/tasks.py`)
+### Фоновые задачи Celery (`workers/tasks.py`)
 
 | Задача | Вход | Прогресс | Результат |
 |--------|------|----------|-----------|
-| `train_model_task(data_path, params)` | Путь к CSV | loading (10%) → preprocessing (30%) → training (60%) → saving (90%) | `model_id`, `model_path`, `metrics`, `features` |
-| `shap_task(model_id, data_path, threshold)` | ID модели + путь к CSV | loading_model (20%) → loading_data (40%) → computing_shap (70%) | Список SHAP-объяснений |
+| `train_model_task(self, data_path)` | Путь к CSV | loading (10%) → preprocessing (30%) → training (60%) → saving (90%) | `model_id`, `model_path`, `metrics`, `features` |
+| `shap_task(self, model_id, data_path, threshold)` | ID модели + путь к CSV | loading_model (20%) → loading_data (40%) → computing_shap (70%) | Список SHAP-объяснений |
 
-Результаты кэшируются в Redis с ключом `task_result:{job_id}` (TTL 24 часа).
+Результаты кэшируются в Celery backend (Redis). Статус задач отслеживается через `AsyncResult`.
 
 ---
 
@@ -243,7 +244,7 @@ app.py → ml_core → файлы/модели/логи
 | `BASE_DIR` | Корень проекта | Загружается из `.env` через `python-dotenv` |
 | `DEBUG` | `False` | Режим отладки |
 | `DATABASE_URL` | `sqlite:///db.sqlite3` | URL базы данных |
-| `REDIS_URL` | `redis://localhost:6379/0` | Redis для кэша/RQ |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis для кэша/Celery-брокер |
 | `RANDOM_SEED` | `42` |_seed для воспроизводимости |
 | `DEFAULT_N_CLUSTERS` | `3` | Число кластеров по умолчанию |
 | `RISK_THRESHOLD` | `0.5` | Порог классификации риска |
@@ -294,15 +295,17 @@ streamlit run app.py
 
 ### Микросервисное развёртывание (Docker)
 
-> Требует `docker-compose.yml` (если добавлен в проект) или ручного запуска контейнеров:
-
 ```bash
-docker build -t ml-api -f Dockerfile.api .
-docker build -t ml-worker -f Dockerfile.worker .
-docker build -t ml-frontend -f Dockerfile.frontend .
+docker compose up -d
 ```
 
-Необходимые сервисы: **Redis** (кэш/RQ), **PostgreSQL/SQLite** (БД).
+Сервисы (4):
+- **nginx** — фронтенд (port 80)
+- **ml-api** — FastAPI бэкенд (port 8000)
+- **ml-worker** — Celery worker (фоновые задачи)
+- **redis** — брокер сообщений + кэш (port 6379)
+
+Volumes: `ml-models`, `ml-logs`, `ml-experiments` — общее хранилище между API и worker.
 
 ---
 

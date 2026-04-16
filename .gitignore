@@ -18,3 +18,4 @@ frontend/dist/*
 /.pre-commit-cache
 htmlcov/*
 .coverage
+.aider*
