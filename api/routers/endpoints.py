@@ -234,6 +234,7 @@ class ExperimentSaveRequest(BaseModel):
     metrics: Dict[str, Any] = {}
     features: List[str] = []
     description: str = ""
+    config: Dict[str, Any] = {}  # <--- Добавили поле конфигурации
 
 
 @router.post("/full")
@@ -313,10 +314,23 @@ async def full_analysis(request: AnalysisRequest):
 
         # result — это объект Pydantic (AnalysisResult), обращаемся через точку
         # Возвращаем СЛОВАРЬ, а не объект модели, чтобы избежать валидации Pydantic
+
+        # Добавляем конфигурацию для воспроизводимости
+        analysis_config = {
+            "model_name": result.model_name or "unknown",
+            "target_col": target,
+            "n_samples": len(df),
+            "n_features": len(result.selected_features),
+            "n_clusters": request.n_clusters,
+            "use_smote": request.use_smote,
+            "corr_threshold": request.corr_threshold,
+            "optimization_metric": request.optimization_metric,
+        }
+
         return {
             "status": result.status,
             "message": result.message,
-            "target_col": target,
+            "config": analysis_config,  # <--- ВОТ ЭТО
             "metrics": scrub(result.metrics),
             "test_metrics": scrub(result.test_metrics),
             "cv_results": scrub(result.cv_results),
@@ -649,11 +663,15 @@ async def save_experiment(request: ExperimentSaveRequest):
     """Сохранение эксперимента."""
     try:
         tracker = ExperimentTracker()
+
+        # Собираем полные данные: метрики + признаки + описание + КОНФИГ
         exp_data = {
             "metrics": request.metrics,
             "features": request.features,
             "description": request.description,
+            "config": request.config or {},  # <--- Сохраняем конфигурацию
         }
+
         exp_id = tracker.save_experiment(request.name, exp_data)
         return {"experiment_id": exp_id}
     except Exception as e:

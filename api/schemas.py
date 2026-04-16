@@ -87,6 +87,8 @@ class PredictResponse(BaseModel):
 
     prediction: int
     probability: float
+    model_name: Optional[str] = None
+    features_used: Optional[List[str]] = None
 
 
 class TaskStatus(BaseModel):

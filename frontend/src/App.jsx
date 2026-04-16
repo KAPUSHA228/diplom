@@ -8,6 +8,10 @@ import {
   runFullAnalysis,
   getExcelPreview,
   processExcel,
+  trainAsyncJson,
+  getTaskStatus,
+  saveExperiment,
+  listExperiments,
 } from "./api";
 import AnalysisSidebar from "./components/AnalysisSidebar";
 import AnalysisResults from "./components/AnalysisResults";
@@ -66,13 +70,59 @@ function ThemeToggle() {
   );
 }
 
+function PollingTask({ taskId, title }) {
+  const [task, setTask] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!taskId) return;
+    let stopped = false;
+    const timer = setInterval(async () => {
+      try {
+        const status = await getTaskStatus(taskId);
+        if (!stopped) setTask(status);
+        if (status.status === "SUCCESS" || status.status === "FAILURE") clearInterval(timer);
+      } catch (e) {
+        if (!stopped) setError(String(e.message || e));
+        clearInterval(timer);
+      }
+    }, 2000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [taskId]);
+
+  if (!taskId) return null;
+  return (
+    <div className="card">
+      <h3>{title}</h3>
+      <p><b>Task ID:</b> {taskId}</p>
+      {error ? <p className="error">{error}</p> : null}
+      {task ? (
+        <>
+          <p><b>Статус:</b> {task.status}</p>
+          <p><b>Этап:</b> {task.stage || "-"} | <b>Прогресс:</b> {task.progress ?? 0}%</p>
+          {task.result ? <pre>{JSON.stringify(task.result, null, 2)}</pre> : null}
+          {task.error ? <pre className="error">{task.error}</pre> : null}
+        </>
+      ) : <p>Ожидание обновлений...</p>}
+    </div>
+  );
+}
+
 function MainPage() {
   const shared = useSharedData();
   const [file, setFile] = useState(null);
   const [csvData, setCsvData] = useState(null);
   const [csvPreview, setCsvPreview] = useState({ headers: [], rows: [], rowCount: 0, riskPct: null });
   const [corrResult, setCorrResult] = useState(null);
+  const [trainTaskId, setTrainTaskId] = useState("");
   const [analysisResult, setAnalysisResult] = useState(null);
+
+  // Состояние для сохранения эксперимента
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [saveDesc, setSaveDesc] = useState("");
+  const [saving, setSaving] = useState(false);
+
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -167,6 +217,38 @@ function MainPage() {
     try { setBusy(true); setError(""); const res = await uploadForCorrelation(file); setCorrResult(res); }
     catch (e) { setError(String(e.message || e)); }
     finally { setBusy(false); }
+  }
+
+  async function onTrainAsync() {
+    if (!csvData || !csvData.length) return;
+    setBusy(true); setError("");
+    try {
+      const res = await trainAsyncJson(csvData);
+      setTrainTaskId(res.task_id);
+    } catch (e) { setError(String(e.message || e)); }
+    finally { setBusy(false); }
+  }
+
+  async function handleSaveExperiment() {
+    if (!saveName.trim() || !analysisResult) return;
+    setSaving(true);
+    try {
+      await saveExperiment(
+        saveName,
+        analysisResult.test_metrics || analysisResult.metrics || {},
+        analysisResult.selected_features || [],
+        saveDesc,
+        analysisResult.config || {}
+      );
+      setSaveModalOpen(false);
+      setSaveName("");
+      setSaveDesc("");
+      alert("✅ Эксперимент сохранён!");
+    } catch (e) {
+      setError("Ошибка сохранения: " + e.message);
+    } finally {
+      setSaving(false);
+    }
   }
 
   /** Вспомогательная функция для обновления превью и данных */
@@ -466,7 +548,44 @@ function MainPage() {
         {error && <p className="error">{error}</p>}
 
         {/* Результаты ПОСЛЕ нажатия кнопки */}
-        {analysisResult && <AnalysisResults result={analysisResult} />}
+        {analysisResult && (
+          <>
+            <AnalysisResults result={analysisResult} />
+            <div className="card" style={{ marginTop: 16, background: "var(--bg-secondary)" }}>
+              <h3>💾 Сохранить этот анализ</h3>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+                <label style={{ flex: 1 }}>
+                  Название:
+                  <input
+                    type="text"
+                    value={saveName}
+                    onChange={e => setSaveName(e.target.value)}
+                    placeholder="Например: Вильямс (SMOTE выкл)"
+                    style={{ width: "100%", marginTop: 4, padding: 8, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }}
+                  />
+                </label>
+                <label style={{ flex: 2 }}>
+                  Описание:
+                  <input
+                    type="text"
+                    value={saveDesc}
+                    onChange={e => setSaveDesc(e.target.value)}
+                    placeholder="Комментарий..."
+                    style={{ width: "100%", marginTop: 4, padding: 8, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }}
+                  />
+                </label>
+                <button
+                  className="primary"
+                  onClick={handleSaveExperiment}
+                  disabled={!saveName.trim() || saving}
+                  style={{ height: 40 }}
+                >
+                  {saving ? "⏳..." : "Сохранить"}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
 
         {/* Быстрые инструменты (показываются только если анализ ещё не запущен) */}
         {!analysisResult && (
@@ -487,6 +606,14 @@ function MainPage() {
                 </>
               ) : <p className="muted">После запуска появится корреляционная матрица.</p>}
             </div>
+
+            <div className="card">
+              <h2>3) Асинхронные ML-задачи (Celery)</h2>
+              <p className="muted">Обучение в фоне (требует Celery worker). Не блокирует интерфейс.</p>
+              <button onClick={onTrainAsync} disabled={!csvData || busy}>Обучение модели (Async)</button>
+            </div>
+
+            <PollingTask taskId={trainTaskId} title="Обучение модели" />
           </>
         )}
       </div>

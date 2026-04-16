@@ -1,12 +1,10 @@
-import json
 import os
 import tempfile
-import sys
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
-from typing import Optional
+from typing import Optional, Dict, Any
 from fastapi.middleware.cors import CORSMiddleware
 from api.schemas import PredictRequest, PredictResponse, TaskStatus, TrainResponse
 from api.routers.endpoints import router as analyze_router
@@ -14,22 +12,9 @@ from ml_core.analysis import correlation_analysis
 from ml_core.models import ModelTrainer
 import numpy as np
 
-# RQ не работает на Windows (требует fork).
-# На Linux/macOS импортируем, на Windows — заглушки.
-if sys.platform != "win32":
-    from redis import Redis
-    from rq import Queue
-    from rq.job import Job
-    from workers.tasks import train_model_task, shap_task
-
-    RQ_AVAILABLE = True
-else:
-    Redis = None
-    Queue = None
-    Job = None
-    train_model_task = None
-    shap_task = None
-    RQ_AVAILABLE = False
+# Celery работает на Windows (в отличие от RQ).
+from celery_app import app_celery as celery_app
+from workers.tasks import train_model_task, shap_task
 
 app = FastAPI(
     title="ML Analytics Service",
@@ -48,36 +33,94 @@ app.add_middleware(
 # Подключаем роутер АРМ исследователя (новый API)
 app.include_router(analyze_router)
 
+# Инициализация трейнера (единый экземпляр)
+trainer = ModelTrainer()
+
+# ==================== Legacy Endpoints ====================
+
+
+@app.get("/", response_model=dict)
+async def root():
+    return {
+        "service": "ML Analytics Service",
+        "docs": "/docs",
+        "health": "/health",
+    }
+
 
 @app.get("/health")
 async def health():
     return {"status": "healthy", "service": "ml-analytics"}
 
 
-@app.get("/")
-async def root():
-    return {"service": "ML Analytics Service", "docs": "/docs", "health": "/health"}
+@app.post("/api/v1/ml/train_async")
+async def train_async_json(data: Dict[str, Any]):
+    """
+    Запуск асинхронного обучения (принимает JSON массив данных из React).
+    """
+    import tempfile
+    import pandas as pd
 
+    if "df" not in data or not data["df"]:
+        raise HTTPException(400, "Data is empty or invalid format")
 
-# Инициализация
-trainer = ModelTrainer()
+    # Сохраняем JSON в CSV для Celery
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as f:
+        df = pd.DataFrame(data["df"])
+        df.to_csv(f, index=False)
+        tmp_path = f.name
+
+    # Запускаем задачу в Celery
+    from workers.tasks import train_model_task
+
+    task = train_model_task.delay(tmp_path)
+
+    return {"task_id": task.id, "status": "started"}
 
 
 @app.post("/api/v1/ml/predict")
 async def predict(request: PredictRequest):
     """
     Синхронное предсказание для одного студента.
-    Время: <100ms
+    Загружает последнюю сохранённую модель или обучает на лету.
+    Время: <100ms (с загруженной моделью)
     """
-    # Преобразуем в DataFrame
-    _df = pd.DataFrame([request.data])
+    try:
+        # Преобразуем в DataFrame
+        input_df = pd.DataFrame([request.data])
 
-    # TODO: загрузить текущую модель из БД
-    # пока используем заглушку
-    prediction = 0
-    probability = 0.75
+        # Пытаемся загрузить последнюю сохранённую модель
+        model, model_name, meta = trainer.get_best_model()
 
-    return PredictResponse(prediction=prediction, probability=probability)
+        if model is None:
+            # Если сохранённой модели нет — обучаем на лету из переданных данных
+            raise FileNotFoundError("No saved model found")
+
+        # Определяем признаки из метаданных модели
+        features = meta.get("features", [])
+        if not features:
+            # Фоллбэк: берём все числовые колонки из входных данных
+            features = input_df.select_dtypes(include="number").columns.tolist()
+
+        # Подготовка входных данных
+        X = input_df[features].fillna(input_df[features].median(numeric_only=True))
+
+        # Предсказание
+        prediction = int(model.predict(X)[0])
+        proba = model.predict_proba(X)[0]
+        probability = float(proba[1]) if len(proba) > 1 else float(proba[0])
+
+        return PredictResponse(
+            prediction=prediction,
+            probability=round(probability, 4),
+            model_name=model_name,
+            features_used=features,
+        )
+
+    except (FileNotFoundError, KeyError) as e:
+        raise HTTPException(404, f"Model not found or missing features: {e}")
+    except Exception as e:
+        raise HTTPException(500, f"Prediction failed: {e}")
 
 
 def _scrub(obj):
@@ -219,19 +262,8 @@ async def correlation(file: UploadFile = File(...), sheet_name: Optional[str] = 
     return JSONResponse(content=response)
 
 
-# Подключение к Redis (только на Linux/macOS + если доступен)
-if RQ_AVAILABLE:
-    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    try:
-        redis_conn = Redis.from_url(REDIS_URL)
-        queue = Queue(connection=redis_conn)
-    except Exception:
-        redis_conn = None
-        queue = None
-else:
-    redis_conn = None
-    queue = None
-
+# Настройки для Celery (Redis URL)
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
@@ -239,14 +271,9 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 @app.post("/api/v1/ml/train", response_model=TrainResponse)
 async def train_model(file: UploadFile = File(...)):
     """
-    Запуск обучения модели в фоне.
+    Запуск обучения модели в фоне через Celery.
     Возвращает task_id для отслеживания.
     """
-    if queue is None:
-        if not RQ_AVAILABLE:
-            raise HTTPException(501, "Async tasks not available on Windows. Use Docker or Linux for async endpoints.")
-        raise HTTPException(503, "Redis is not available")
-
     # Валидация размера файла (макс 50 MB)
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
@@ -259,10 +286,10 @@ async def train_model(file: UploadFile = File(...)):
         tmp.write(content)
         tmp_path = tmp.name
 
-    # Ставим задачу в очередь
-    job = queue.enqueue(train_model_task, tmp_path, result_ttl=86400)  # хранить результат 24 часа
+    # Отправляем задачу в Celery
+    task = train_model_task.delay(tmp_path)
 
-    return TrainResponse(task_id=job.id, status="started")
+    return TrainResponse(task_id=task.id, status="started")
 
 
 @app.get("/api/v1/ml/train/{task_id}", response_model=TaskStatus)
@@ -270,41 +297,27 @@ async def get_train_status(task_id: str):
     """
     Получить статус задачи обучения
     """
-    if redis_conn is None:
-        raise HTTPException(503, "Redis is not available")
     try:
-        job = Job.fetch(task_id, connection=redis_conn)
+        from celery.result import AsyncResult
+
+        res = AsyncResult(task_id, app=celery_app)
+
+        response = {"task_id": task_id, "status": res.status}
+
+        if res.status == "SUCCESS":
+            response["result"] = res.result
+        elif res.status == "FAILURE":
+            response["error"] = str(res.result)
+        elif res.status == "PROGRESS":
+            response.update(res.result)  # stage, progress
+
+        return response
     except Exception:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    if job.is_finished:
-        # Получаем результат из Redis
-        result = redis_conn.get(f"task_result:{task_id}")
-        if result:
-            return TaskStatus(task_id=task_id, status="completed", result=json.loads(result))
-        else:
-            return TaskStatus(task_id=task_id, status="completed", result={"error": "result expired"})
-
-    elif job.is_failed:
-        return TaskStatus(task_id=task_id, status="failed", error=str(job.exc_info))
-
-    elif job.is_queued:
-        return TaskStatus(task_id=task_id, status="pending")
-
-    elif job.is_started:
-        return TaskStatus(
-            task_id=task_id,
-            status="in_progress",
-            progress=job.meta.get("progress", 0),
-            stage=job.meta.get("stage", "unknown"),
-        )
-
-    else:
-        return TaskStatus(task_id=task_id, status="unknown")
-
 
 @app.get("/api/v1/ml/tasks/{task_id}", response_model=TaskStatus)
-async def get_task_status(task_id: str):
+async def get_unified_task_status(task_id: str):
     """
     Унифицированный статус для любых фоновых задач (train/shap).
     """
@@ -314,13 +327,8 @@ async def get_task_status(task_id: str):
 @app.post("/api/v1/ml/shap", response_model=TrainResponse)
 async def generate_shap(file: UploadFile = File(...), model_id: str = "XGB"):
     """
-    Запуск SHAP-объяснений в фоне.
+    Запуск SHAP-объяснений в фоне через Celery.
     """
-    if queue is None:
-        if not RQ_AVAILABLE:
-            raise HTTPException(501, "Async tasks not available on Windows. Use Docker or Linux for async endpoints.")
-        raise HTTPException(503, "Redis is not available")
-
     # Валидация размера файла (макс 50 MB)
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
@@ -332,6 +340,7 @@ async def generate_shap(file: UploadFile = File(...), model_id: str = "XGB"):
         tmp.write(content)
         tmp_path = tmp.name
 
-    job = queue.enqueue(shap_task, model_id, tmp_path, result_ttl=86400)
+    # Отправляем задачу в Celery
+    task = shap_task.delay(model_id, tmp_path)
 
-    return TrainResponse(task_id=job.id, status="started")
+    return TrainResponse(task_id=task.id, status="started")

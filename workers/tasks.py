@@ -1,185 +1,143 @@
-import json
-import logging
+"""
+Фоновые задачи Celery для обучения моделей и SHAP-объяснений.
+"""
+
 import os
-
 import pandas as pd
-import redis
-from rq import get_current_job
-
-from ml_core.data import prepare_data_for_training
-from ml_core.evaluation import generate_shap_explanations
-from ml_core.features import add_composite_features, get_base_features, preprocess_data, select_features
+from celery_app import app_celery
+from ml_core.features import add_composite_features, get_base_features, preprocess_data_for_smote
 from ml_core.models import ModelTrainer
-
-logger = logging.getLogger(__name__)
-
-# Подключение к Redis
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-redis_client = redis.Redis.from_url(REDIS_URL)
-
-trainer = ModelTrainer()
+from ml_core.evaluation import generate_shap_explanations
+from ml_core.error_handler import logger
 
 
-def _cleanup(data_path):
+def _cleanup(path):
     """Удаление временного файла."""
     try:
-        os.remove(data_path)
-    except OSError:
-        pass
+        if os.path.exists(path):
+            os.unlink(path)
+    except Exception as e:
+        logger.warning(f"Failed to cleanup temp file {path}: {e}")
 
 
-def train_model_task(data_path: str):
+@app_celery.task(bind=True, name="workers.tasks.train_model_task")
+def train_model_task(self, data_path: str):
     """
     Задача обучения модели.
-    Выполняется в фоне.
+    1. Загружает CSV.
+    2. Создает признаки.
+    3. Обучает лучшую модель.
+    4. Сохраняет модель.
     """
-    job = get_current_job()
+    self.update_state(state="PROGRESS", meta={"stage": "loading", "progress": 10})
 
     try:
-        logger.info("train_model_task: started, data_path=%s", data_path)
+        # Чтение данных (попытка разных кодировок)
+        df = None
+        for encoding in ["utf-8", "cp1251"]:
+            try:
+                df = pd.read_csv(data_path, encoding=encoding)
+                break
+            except UnicodeDecodeError:
+                continue
 
-        # Обновляем статус
-        job.meta["stage"] = "loading"
-        job.meta["progress"] = 10
-        job.save_meta()
+        if df is None:
+            # Фоллбэк на errors='ignore'
+            df = pd.read_csv(data_path, encoding="utf-8", errors="ignore")
 
-        # Загружаем данные (пробуем разные кодировки)
-        try:
-            df = pd.read_csv(data_path, encoding="utf-8")
-        except UnicodeDecodeError:
-            df = pd.read_csv(data_path, encoding="cp1251")
-        except Exception:
-            df = pd.read_csv(data_path, encoding="utf-8", errors="replace")
+        self.update_state(state="PROGRESS", meta={"stage": "preprocessing", "progress": 30})
 
-        logger.info("train_model_task: loaded %d rows", len(df))
-
-        job.meta["stage"] = "preprocessing"
-        job.meta["progress"] = 30
-        job.save_meta()
-
-        # Ищем целевую колонку (риск или target)
-        target_col = "risk_flag"
-        if target_col not in df.columns:
-            possible = [c for c in df.columns if "risk" in c.lower() or "target" in c.lower()]
-            target_col = possible[0] if possible else None
-            if target_col is None:
-                raise ValueError(f"Dataset must contain 'risk_flag' or similar column. Found: {list(df.columns)}")
-
+        # Обработка
         df = add_composite_features(df)
         feature_cols = get_base_features(df)
-        for extra in [
-            "trend_grades",
-            "grade_stability",
-            "cognitive_load",
-            "overall_satisfaction",
-            "psychological_wellbeing",
-            "academic_activity",
-        ]:
-            if extra in df.columns and extra not in feature_cols:
-                feature_cols.append(extra)
+        target_col = "risk_flag"
 
-        X_res, y_res = preprocess_data(df, feature_cols, target_col)
-        X_sel, selected_cols = select_features(
-            X_res, y_res, top_n=min(10, X_res.shape[1]), final_n=min(5, X_res.shape[1])
-        )
+        # Если risk_flag нет, ищем другую бинарную цель
+        if target_col not in df.columns:
+            possible = [c for c in df.select_dtypes(include="number").columns if c not in feature_cols]
+            target_col = possible[0] if possible else feature_cols[0]
 
-        X_train_sel, X_test_sel, y_train, y_test = prepare_data_for_training(
-            pd.concat([X_sel, pd.Series(y_res, name=target_col)], axis=1),
-            feature_cols=list(X_sel.columns),
-            target_col=target_col,
-        )
+        X = df[feature_cols].fillna(df[feature_cols].median(numeric_only=True))
+        y = df[target_col]
 
-        job.meta["stage"] = "training"
-        job.meta["progress"] = 60
-        job.save_meta()
+        # АВТО-БИНАРИЗАЦИЯ: если target — это числа (continuous), делим по медиане
+        if y.dtype in ["float64", "int64"] and y.nunique() > 2:
+            median_val = y.median()
+            y = (y > median_val).astype(int)
+
+        # SMOTE (если нужно)
+        if y.nunique() > 1 and y.min() == 0 and y.max() == 1:
+            try:
+                X, y = preprocess_data_for_smote(X, y)
+            except Exception as e:
+                logger.info(f"SMOTE preprocessing failed: {e}. Continuing without SMOTE.")
+
+        self.update_state(state="PROGRESS", meta={"stage": "training", "progress": 60})
 
         # Обучение
-        best_model, best_name, metrics = trainer.train_best_model(X_train_sel, y_train, X_test_sel, y_test)
-        logger.info("train_model_task: best_model=%s, metrics=%s", best_name, metrics)
+        trainer = ModelTrainer()
+        model, model_name, metrics = trainer.train_best_model(X, y)
 
-        job.meta["stage"] = "saving"
-        job.meta["progress"] = 90
-        job.save_meta()
+        self.update_state(state="PROGRESS", meta={"stage": "saving", "progress": 90})
 
-        # Сохраняем модель
-        model_path, metadata = trainer.save_model(best_model, best_name, metrics, selected_cols)
+        # Сохранение
+        model_path, meta = trainer.save_model(model, model_name, metrics, feature_cols)
 
-        # Сохраняем результат в Redis
-        result = {
-            "status": "completed",
-            "model_id": os.path.basename(model_path).replace(".pkl", ""),
+        return {
+            "status": "success",
+            "model_id": model_name,
             "model_path": model_path,
-            "model_name": best_name,
-            "metrics": metrics,
-            "features": selected_cols,
+            "metrics": metrics.get("test", {}),
         }
 
-        # Кэшируем результат
-        redis_client.setex(f"task_result:{job.id}", 3600 * 24, json.dumps(result, default=str))
-
-        logger.info("train_model_task: completed, job_id=%s", job.id)
-        _cleanup(data_path)
-        return result
-
     except Exception as e:
-        logger.exception("train_model_task: failed, job_id=%s, error=%s", job.id, str(e))
-        job.meta["stage"] = "failed"
-        job.meta["error"] = str(e)
-        job.save_meta()
-        _cleanup(data_path)
+        logger.error(f"Training failed: {e}")
         raise
+    finally:
+        _cleanup(data_path)
 
 
-def shap_task(model_id: str, data_path: str, threshold: float = 0.5):
+@app_celery.task(bind=True, name="workers.tasks.shap_task")
+def shap_task(self, model_id: str, data_path: str, threshold: float = 0.5):
     """
-    Генерация SHAP-объяснений
+    Задача генерации SHAP-объяснений.
     """
-    job = get_current_job()
+    self.update_state(state="PROGRESS", meta={"stage": "loading_model", "progress": 20})
 
     try:
-        logger.info("shap_task: started, model_id=%s, data_path=%s", model_id, data_path)
-
-        job.meta["stage"] = "loading_model"
-        job.meta["progress"] = 20
-        job.save_meta()
-
-        # Загружаем модель
+        trainer = ModelTrainer()
+        # Загрузка модели
         model = trainer.load_model(model_name=model_id)
+
         if model is None:
-            raise ValueError(f"Model '{model_id}' not found")
+            # Пытаемся загрузить любую последнюю модель
+            model, model_name, meta = trainer.get_best_model()
+            if model is None:
+                raise FileNotFoundError(
+                    f"Model '{model_id}' not found and no saved models available. "
+                    "Please train a model first using /api/v1/ml/train."
+                )
+            logger.info(f"Model '{model_id}' not found, using latest: {model_name}")
 
-        job.meta["stage"] = "loading_data"
-        job.meta["progress"] = 40
-        job.save_meta()
+        self.update_state(state="PROGRESS", meta={"stage": "loading_data", "progress": 40})
 
-        # Загружаем данные (пробуем разные кодировки)
-        try:
-            df = pd.read_csv(data_path, encoding="utf-8")
-        except UnicodeDecodeError:
-            df = pd.read_csv(data_path, encoding="cp1251")
-        except Exception:
-            df = pd.read_csv(data_path, encoding="utf-8", errors="replace")
-        logger.info("shap_task: loaded %d rows", len(df))
+        df = pd.read_csv(data_path)
 
-        job.meta["stage"] = "computing_shap"
-        job.meta["progress"] = 70
-        job.save_meta()
+        self.update_state(state="PROGRESS", meta={"stage": "computing_shap", "progress": 70})
 
-        # Генерируем объяснения
-        explanations = generate_shap_explanations(model, df, df.columns.tolist(), threshold=threshold, top_n=5)
+        feature_cols = [c for c in df.columns if c not in ["risk_flag", "user_id", "user"]]
+        X = df[feature_cols].fillna(df[feature_cols].median(numeric_only=True))
 
-        result = {"status": "completed", "explanations": explanations, "n_students": len(df)}
+        explanations = generate_shap_explanations(model, X, feature_cols, threshold=threshold)
 
-        redis_client.setex(f"task_result:{job.id}", 3600 * 24, json.dumps(result, default=str))
-
-        logger.info("shap_task: completed, job_id=%s", job.id)
-        _cleanup(data_path)
-        return result
+        return {
+            "status": "success",
+            "explanations": explanations,
+            "n_students": len(explanations),
+        }
 
     except Exception as e:
-        logger.exception("shap_task: failed, job_id=%s, error=%s", job.id, str(e))
-        job.meta["stage"] = "failed"
-        job.meta["error"] = str(e)
-        job.save_meta()
-        _cleanup(data_path)
+        logger.error(f"SHAP generation failed: {e}")
         raise
+    finally:
+        _cleanup(data_path)

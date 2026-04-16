@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { listExperiments, getExperiment, saveExperiment } from "../api";
+import { listExperiments, getExperiment } from "../api";
 
 const LAST_ANALYSIS_KEY = "last_analysis_result";
 
@@ -9,11 +9,6 @@ export default function Experiments() {
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-
-  // Сохранение текущего анализа
-  const [saveName, setSaveName] = useState("");
-  const [saveDesc, setSaveDesc] = useState("");
-  const [saved, setSaved] = useState(false);
 
   async function onLoadList() {
     setBusy(true); setError("");
@@ -34,64 +29,10 @@ export default function Experiments() {
     finally { setBusy(false); }
   }
 
-  async function onSaveExperiment() {
-    if (!saveName.trim()) { setError("Введите имя эксперимента"); return; }
-
-    // Берём последний анализ из localStorage
-    const raw = localStorage.getItem(LAST_ANALYSIS_KEY);
-    if (!raw) { setError("Нет результатов анализа для сохранения. Сначала запустите анализ на главной."); return; }
-
-    setBusy(true); setError(""); setSaved(false);
-    try {
-      const analysis = JSON.parse(raw);
-      const res = await saveExperiment(
-        saveName.trim(),
-        analysis.test_metrics || analysis.metrics || {},
-        analysis.selected_features || [],
-        saveDesc.trim()
-      );
-      setSaved(true);
-      setSaveName("");
-      setSaveDesc("");
-      // Обновим список
-      const listRes = await listExperiments();
-      setExperiments(listRes.experiments || []);
-    } catch (e) { setError(String(e.message || e)); }
-    finally { setBusy(false); }
-  }
-
   return (
     <div className="card">
       <h2>📁 История экспериментов</h2>
-
-      {/* --- Сохранить текущий анализ --- */}
-      <div className="save-experiment-section" style={{ marginTop: 12, padding: 12, background: "var(--bg-secondary)", borderRadius: 8 }}>
-        <h3>💾 Сохранить последний анализ</h3>
-        <label style={{ display: "block", marginBottom: 8 }}>
-          <b>Название:</b>
-          <input
-            type="text"
-            value={saveName}
-            onChange={e => setSaveName(e.target.value)}
-            placeholder="Например: Вильямс + Шварц, RF модель"
-            style={{ width: "100%", marginTop: 4, padding: 8, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }}
-          />
-        </label>
-        <label style={{ display: "block", marginBottom: 8 }}>
-          <b>Описание (необязательно):</b>
-          <textarea
-            value={saveDesc}
-            onChange={e => setSaveDesc(e.target.value)}
-            placeholder="Комментарий к эксперименту..."
-            rows={2}
-            style={{ width: "100%", marginTop: 4, padding: 8, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", resize: "vertical" }}
-          />
-        </label>
-        <button className="primary" onClick={onSaveExperiment} disabled={busy || !saveName.trim()}>
-          {busy ? "⏳ Сохранение..." : "✅ Сохранить эксперимент"}
-        </button>
-        {saved && <p className="ok" style={{ marginTop: 8 }}>✅ Эксперимент сохранён!</p>}
-      </div>
+      <p className="muted">Чтобы сохранить анализ, используйте форму на вкладке "Главное" после завершения анализа.</p>
 
       {/* --- Список экспериментов --- */}
       <div style={{ marginTop: 16 }}>
@@ -125,10 +66,51 @@ export default function Experiments() {
           </>
         )}
         {detail && (
-          <details open style={{ marginTop: 8 }}>
-            <summary>Детали эксперимента</summary>
-            <pre>{JSON.stringify(detail, null, 2)}</pre>
-          </details>
+          <div style={{ marginTop: 16, padding: 12, background: "var(--bg-secondary)", borderRadius: 8 }}>
+            <h3 style={{ margin: "0 0 12px 0" }}>📄 Детали: {detail.name}</h3>
+
+            {/* Таблица конфигурации */}
+            {detail.config && Object.keys(detail.config).length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <h4 style={{ margin: "0 0 6px 0" }}>⚙️ Параметры:</h4>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  {Object.entries(detail.config).map(([key, val]) => (
+                    <div key={key} style={{ display: "flex", justifyContent: "space-between", padding: "4px 8px", background: "var(--bg)", borderRadius: 4 }}>
+                      <span style={{ fontWeight: 600 }}>{key}:</span>
+                       <span>{String(val)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Метрики */}
+            <div style={{ marginBottom: 12 }}>
+              <h4 style={{ margin: "0 0 6px 0" }}>📊 Метрики:</h4>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+                {detail.metrics && Object.entries(detail.metrics).map(([k, v]) => (
+                  <div key={k} style={{ textAlign: "center", padding: "4px", background: "var(--bg)", borderRadius: 4 }}>
+                    <div style={{ fontSize: 10 }}>{k}</div>
+                    <div style={{ fontWeight: "bold" }}>{typeof v === "number" ? v.toFixed(3) : v}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Признаки */}
+            {detail.features && detail.features.length > 0 && (
+              <div>
+                <h4 style={{ margin: "0 0 6px 0" }}>🧬 Признаки:</h4>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {detail.features.map((f, i) => (
+                    <span key={i} style={{ padding: "2px 6px", background: "var(--primary)", color: "#fff", borderRadius: 4, fontSize: 12 }}>{f}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {detail.description && <p style={{ marginTop: 12, fontStyle: "italic" }}>{detail.description}</p>}
+          </div>
         )}
       </div>
     </div>

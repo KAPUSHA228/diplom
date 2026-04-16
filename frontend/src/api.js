@@ -29,6 +29,7 @@ export async function uploadForShap(file, modelId = "XGB") {
       body: form
     });
 }
+/** Получение статуса задачи */
 export async function getTaskStatus(taskId) {
     return request(`/api/v1/ml/tasks/${taskId}`);
 }
@@ -160,6 +161,19 @@ export async function forecastStudent(data, studentId, valueCol = "avg_grade", t
     });
 }
 
+// ==================== Асинхронные задачи (Celery) ====================
+
+/** Запуск обучения в фоне (принимает JSON) */
+export async function trainAsyncJson(data) {
+    return request("/api/v1/ml/train_async", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ df: data }),
+    });
+}
+
+
+
 // ==================== Дрейф ====================
 
 /** Проверка дрейфа данных */
@@ -179,11 +193,17 @@ export async function getMetricsHistory() {
 // ==================== Эксперименты ====================
 
 /** Сохранение эксперимента */
-export async function saveExperiment(name, metrics = {}, features = [], description = "") {
+export async function saveExperiment(name, metrics = {}, features = [], description = "", config = {}) {
     return request("/api/v1/analyze/experiments/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, metrics, features, description }),
+        body: JSON.stringify({
+            name,
+            metrics,
+            features,
+            description,
+            config // <--- Отправляем конфигурацию для воспроизводимости
+        }),
     });
 }
 

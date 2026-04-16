@@ -143,20 +143,20 @@ def detect_sheet_type(sheet_name: str) -> str:
     elif "соц" in sheet_lower:
         if "соц14" in sheet_lower or "соцдем" in sheet_lower:
             return "demographics"
-        elif "соц1" in sheet_lower:
-            return "personality"
-        elif "соц2" in sheet_lower:
-            return "interests"
-        elif "соц3" in sheet_lower:
-            return "digital"
-        elif "соц4" in sheet_lower or "соц5" in sheet_lower or "соц6" in sheet_lower:
-            return "activities"
-        elif "соц8" in sheet_lower:
-            return "attitudes"
-        elif "соц9" in sheet_lower:
-            return "grades"
         elif "соц11" in sheet_lower or "соц12" in sheet_lower or "соц13" in sheet_lower:
             return "career"
+        elif "соц9" in sheet_lower:
+            return "grades"
+        elif "соц8" in sheet_lower:
+            return "attitudes"
+        elif "соц4" in sheet_lower or "соц5" in sheet_lower or "соц6" in sheet_lower:
+            return "activities"
+        elif "соц3" in sheet_lower:
+            return "digital"
+        elif "соц2" in sheet_lower:
+            return "interests"
+        elif "соц1" in sheet_lower:
+            return "personality"
         else:
             return "social"
 

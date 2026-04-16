@@ -1,3 +1,4 @@
+import { memo } from "react";
 import Plot from "react-plotly.js";
 
 /** Хелпер для скачивания JSON как CSV */
@@ -22,7 +23,7 @@ function downloadJSONAsCSV(data, filename) {
 /**
  * Отображает результаты полного анализа
  */
-export default function AnalysisResults({ result }) {
+const AnalysisResults = memo(({ result }) => {
   if (!result) return null;
 
   const {
@@ -195,7 +196,7 @@ export default function AnalysisResults({ result }) {
       </div>
     </div>
   );
-}
+});
 
 function MetricCard({ label, value }) {
   return (
@@ -231,3 +232,5 @@ function ClusterTable({ profiles }) {
     </div>
   );
 }
+
+export default AnalysisResults;

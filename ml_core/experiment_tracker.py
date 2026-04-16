@@ -53,6 +53,7 @@ class ExperimentTracker:
             "timestamp": datetime.now().isoformat(),
             "metrics": data.get("metrics", {}),
             "features": data.get("features", []),
+            "config": data.get("config", {}),  # <--- Сохраняем конфигурацию
             "model_name": data.get("model_name", "unknown"),
             "n_samples": data.get("n_samples", 0),
             "n_features": data.get("n_features", 0),

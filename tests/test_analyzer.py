@@ -1,4 +1,5 @@
 """Интеграционные тесты для ml_core/analyzer.py (ResearchAnalyzer)"""
+
 import pytest
 import pandas as pd
 import numpy as np
@@ -14,25 +15,27 @@ def analyzer():
 def full_dataset(rng=np.random.RandomState(42)):
     """Полный датасет со всеми признаками."""
     n = 200
-    return pd.DataFrame({
-        "student_id": range(n),
-        "avg_grade": rng.uniform(2.0, 5.0, n),
-        "grade_std": rng.uniform(0.1, 1.0, n),
-        "min_grade": rng.uniform(2.0, 3.5, n),
-        "max_grade": rng.uniform(3.5, 5.0, n),
-        "n_courses": rng.randint(3, 10, n),
-        "avg_brs": rng.uniform(40, 100, n),
-        "attendance_rate": rng.uniform(0.4, 1.0, n),
-        "satisfaction_score": rng.uniform(1.0, 5.0, n),
-        "engagement_score": rng.uniform(1.0, 5.0, n),
-        "workload_perception": rng.uniform(1.0, 5.0, n),
-        "stress_level": rng.uniform(0.0, 10.0, n),
-        "motivation_score": rng.uniform(0.0, 10.0, n),
-        "anxiety_score": rng.uniform(0.0, 10.0, n),
-        "n_essays": rng.randint(0, 5, n),
-        "avg_essay_grade": rng.uniform(2.0, 5.0, n),
-        "risk_flag": (rng.random(n) > 0.7).astype(int),
-    })
+    return pd.DataFrame(
+        {
+            "student_id": range(n),
+            "avg_grade": rng.uniform(2.0, 5.0, n),
+            "grade_std": rng.uniform(0.1, 1.0, n),
+            "min_grade": rng.uniform(2.0, 3.5, n),
+            "max_grade": rng.uniform(3.5, 5.0, n),
+            "n_courses": rng.randint(3, 10, n),
+            "avg_brs": rng.uniform(40, 100, n),
+            "attendance_rate": rng.uniform(0.4, 1.0, n),
+            "satisfaction_score": rng.uniform(1.0, 5.0, n),
+            "engagement_score": rng.uniform(1.0, 5.0, n),
+            "workload_perception": rng.uniform(1.0, 5.0, n),
+            "stress_level": rng.uniform(0.0, 10.0, n),
+            "motivation_score": rng.uniform(0.0, 10.0, n),
+            "anxiety_score": rng.uniform(0.0, 10.0, n),
+            "n_essays": rng.randint(0, 5, n),
+            "avg_essay_grade": rng.uniform(2.0, 5.0, n),
+            "risk_flag": (rng.random(n) > 0.7).astype(int),
+        }
+    )
 
 
 @pytest.mark.integration
@@ -94,10 +97,12 @@ class TestResearchAnalyzerHelperMethods:
     """Тесты вспомогательных методов ResearchAnalyzer."""
 
     def test_create_composite_score(self, analyzer):
-        df = pd.DataFrame({
-            "a": [1.0, 2.0, 3.0, 4.0, 5.0],
-            "b": [5.0, 4.0, 3.0, 2.0, 1.0],
-        })
+        df = pd.DataFrame(
+            {
+                "a": [1.0, 2.0, 3.0, 4.0, 5.0],
+                "b": [5.0, 4.0, 3.0, 2.0, 1.0],
+            }
+        )
         result, name = analyzer.create_composite_score(
             df, feature_weights={"a": 0.7, "b": 0.3}, score_name="test_score"
         )
@@ -115,7 +120,7 @@ class TestResearchAnalyzerHelperMethods:
         subset = analyzer.select_subset(
             full_dataset,
             n_samples=10,
-            random_state=42,
+            random_seed=42,
         )
         assert len(subset) == 10
 

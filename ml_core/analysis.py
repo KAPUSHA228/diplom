@@ -12,11 +12,13 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from ml_core.error_handler import logger
 from ml_core.config import config  # общая утилита
+from ml_core.cache import cache_result  # кеширование
 
 
 # ---- Корреляционный анализ ----
 
 
+@cache_result
 def correlation_analysis(df, feature_cols, target_col, corr_threshold=0.3, output_prefix="corr"):
     """
     Полный корреляционный анализ: матрица Pearson, strong_matrix (≥ порога),
@@ -71,6 +73,7 @@ def correlation_analysis(df, feature_cols, target_col, corr_threshold=0.3, outpu
     }
 
 
+@cache_result
 def cluster_students(df, n_clusters=3, feature_cols=None):
     """
     Кластеризация студентов методом K-means с предварительным масштабированием.

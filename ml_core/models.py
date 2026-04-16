@@ -156,6 +156,35 @@ class ModelTrainer:
 
         return None
 
+    def get_best_model(self):
+        """
+        Загружает последнюю сохранённую модель (любую, независимо от имени).
+
+        Returns:
+            (model, model_name, metadata): модель, имя и метаданные или (None, None, None)
+        """
+        model_files = [f for f in os.listdir(self.models_dir) if f.endswith(".pkl")]
+        if not model_files:
+            return None, None, None
+
+        # Берём самый свежий .pkl файл
+        latest_model_file = sorted(model_files)[-1]
+        model_path = os.path.join(self.models_dir, latest_model_file)
+
+        # Извлекаем имя модели из имени файла (например "RF_20260410_123456.pkl" -> "RF")
+        model_name = latest_model_file.split("_")[0]
+
+        # Загружаем метаданные
+        meta = None
+        meta_filename = latest_model_file.replace(".pkl", "_meta.json")
+        meta_path = os.path.join(self.models_dir, meta_filename)
+        if os.path.exists(meta_path):
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+
+        model = joblib.load(model_path)
+        return model, model_name, meta or {}
+
     # ---- Обучение и сравнение моделей ----
 
     def train_and_evaluate(self, X_train, X_test, y_train, y_test):
