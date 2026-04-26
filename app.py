@@ -24,7 +24,7 @@ from ml_core.models import ModelTrainer
 from ml_core.evaluation import plot_roc_curves, plot_confusion_matrix, plot_feature_importance
 from ml_core.logger import MLLogger
 from ml_core.drift_detector import DataDriftDetector
-from ml_core.analysis import correlation_analysis_enhanced
+from ml_core.analysis import correlation_analysis
 from ml_core.features import build_composite_score
 from ml_core.timeseries import forecast_grades
 from ml_core.crosstab import export_crosstab
@@ -513,7 +513,7 @@ if st.session_state.analysis_completed:
         corr_threshold = 0.3  # можно вынести в sidebar позже
 
         corr_results = safe_execute(
-            correlation_analysis_enhanced,
+            correlation_analysis,
             df,
             all_features,
             target_col,

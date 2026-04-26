@@ -39,11 +39,18 @@ def create_crosstab(df, row_var, col_var, values=None, aggfunc="count", normaliz
         raise ValueError(f"Переменная '{row_var}' не найдена в данных")
     if col_var not in df.columns:
         raise ValueError(f"Переменная '{col_var}' не найдена в данных")
+
     for var in [row_var, col_var]:
         if pd.api.types.is_numeric_dtype(df[var]) and df[var].nunique() > 20:
-            raise ValueError(
-                f"Переменная '{var}' является числовой с {df[var].nunique()} уникальными значениями. Для кросс-таблицы используйте категориальные переменные или предварительно разбейте на группы (pd.cut/pd.qcut)."
+            # Разбиваем на 4 группы (квартили)
+            df[f"{var}_group"] = pd.qcut(
+                df[var], q=4, labels=["Низкий", "Ниже среднего", "Выше среднего", "Высокий"], duplicates="drop"
             )
+            if var == row_var:
+                row_var = f"{var}_group"
+            else:
+                col_var = f"{var}_group"
+
     if values:
         # Агрегация по значениям (например, средняя успеваемость)
         table = pd.pivot_table(df, values=values, index=row_var, columns=col_var, aggfunc=aggfunc, fill_value=0)
