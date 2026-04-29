@@ -76,3 +76,13 @@ repos:
           - typescript-eslint@8.24.0
           - typescript@5.7.3
         args: ["--fix",  "--config", "frontend/eslint.config.js"]  # Автоматически исправлять ошибки, которые можно исправить
+  # === Фронтенд линтинг CSS (Stylelint) ===
+  - repo: https://github.com/awebdeveloper/pre-commit-stylelint
+    rev: 'f792d6b'
+    hooks:
+      - id: stylelint
+        files: \.(css|scss)$
+        additional_dependencies:
+          - stylelint@16.0.2
+          - stylelint-config-standard@36.0.0
+        args: ["--fix"]
