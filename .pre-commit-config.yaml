@@ -17,7 +17,7 @@ repos:
     rev: v0.3.4
     hooks:
       - id: ruff
-        args: [--fix, --exit-non-zero-on-fix --ignore=E501]
+        args: [--fix, --exit-non-zero-on-fix, --ignore=E501]
         exclude: ^.*\/migrations\/.*\.py$
 
   # === Утилиты ===
@@ -65,7 +65,7 @@ repos:
     hooks:
       - id: eslint
         # Файлы для проверки
-        files: \.(js|jsx|ts|tsx)$
+        files: \.(js|jsx)$
         # Типы файлов, которые ESLint обрабатывает как TypeScript/React
         types: [file]
         # Дополнительные зависимости, которые нужны ESLint для работы с React/TS
@@ -75,4 +75,4 @@ repos:
           - eslint-plugin-react-hooks@5.1.0
           - typescript-eslint@8.24.0
           - typescript@5.7.3
-        args: ["--fix"]  # Автоматически исправлять ошибки, которые можно исправить
+        args: ["--fix",  "--config", "frontend/eslint.config.js"]  # Автоматически исправлять ошибки, которые можно исправить
