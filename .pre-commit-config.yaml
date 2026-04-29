@@ -10,13 +10,15 @@ repos:
       - id: black
         language_version: python3
         args: [--line-length=120]
+        exclude: ^.*\/migrations\/.*\.py$
 
   # === Линтер ===
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.3.4
     hooks:
       - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
+        args: [--fix, --exit-non-zero-on-fix --ignore=E501]
+        exclude: ^.*\/migrations\/.*\.py$
 
   # === Утилиты ===
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -40,3 +42,37 @@ repos:
       - id: check-merge-conflict
       # Проверка case-sensitive импортов
       - id: check-case-conflict
+
+  # === Фронтенд форматирование (Prettier) ===
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v4.0.0-alpha.8
+    hooks:
+      - id: prettier
+        # Указываем, какие файлы проверять
+        files: \.(js|jsx|ts|tsx|css|scss|md)$
+        # Исключаем папки, которые не нужно трогать (опционально)
+        exclude: |
+          (?x)^(
+              node_modules/|
+              \.next/|
+              build/
+              dist/
+          )
+
+  # === Фронтенд линтинг (ESLint) ===
+  - repo: https://github.com/pre-commit/mirrors-eslint
+    rev: v9.21.0
+    hooks:
+      - id: eslint
+        # Файлы для проверки
+        files: \.(js|jsx|ts|tsx)$
+        # Типы файлов, которые ESLint обрабатывает как TypeScript/React
+        types: [file]
+        # Дополнительные зависимости, которые нужны ESLint для работы с React/TS
+        additional_dependencies:
+          - eslint@9.21.0
+          - eslint-plugin-react@7.37.4
+          - eslint-plugin-react-hooks@5.1.0
+          - typescript-eslint@8.24.0
+          - typescript@5.7.3
+        args: ["--fix"]  # Автоматически исправлять ошибки, которые можно исправить
