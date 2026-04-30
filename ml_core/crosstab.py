@@ -7,9 +7,21 @@ from scipy.stats import chi2_contingency
 import plotly.express as px
 
 from ml_core.config import config  # общая утилита
+from ml_core.error_handler import logger
+import numpy as np
 
 
-def create_crosstab(df, row_var, col_var, values=None, aggfunc="count", normalize=False):
+def create_crosstab(
+    df,
+    row_var,
+    col_var,
+    values=None,
+    aggfunc="count",
+    normalize=False,
+    auto_bin=True,
+    n_bins: int = 4,
+    bin_method: str = "cut",
+):
     """
     Построение кросс-таблицы между двумя категориальными переменными.
 
@@ -32,45 +44,78 @@ def create_crosstab(df, row_var, col_var, values=None, aggfunc="count", normaliz
     --------
     dict с таблицей, статистикой и визуализацией
     """
+
     df = df.copy()
+    bin_info = {}
 
-    # Проверяем, что переменные существуют в DataFrame
-    if row_var not in df.columns:
-        raise ValueError(f"Переменная '{row_var}' не найдена в данных")
-    if col_var not in df.columns:
-        raise ValueError(f"Переменная '{col_var}' не найдена в данных")
-
+    # Автоматический биннинг для числовых колонок
     for var in [row_var, col_var]:
-        if pd.api.types.is_numeric_dtype(df[var]) and df[var].nunique() > 20:
-            # Разбиваем на 4 группы (квартили)
-            df[f"{var}_group"] = pd.qcut(
-                df[var], q=4, labels=["Низкий", "Ниже среднего", "Выше среднего", "Высокий"], duplicates="drop"
-            )
-            if var == row_var:
-                row_var = f"{var}_group"
-            else:
-                col_var = f"{var}_group"
+        if pd.api.types.is_numeric_dtype(df[var]) and df[var].nunique() > 20 and auto_bin:
 
+            try:
+                interval_labels = []
+
+                if bin_method == "qcut":
+                    # Равное количество наблюдений в каждой группе
+                    bins_series = pd.qcut(df[var], q=n_bins, duplicates="drop", retbins=True)
+                    real_bins = bins_series[1]
+                    df[f"{var}_group"] = bins_series[0]
+
+                else:  # "cut" — равные интервалы по шкале
+                    min_val = df[var].min()
+                    max_val = df[var].max()
+                    real_bins = np.linspace(min_val, max_val, n_bins + 1)
+                    df[f"{var}_group"] = pd.cut(df[var], bins=real_bins, include_lowest=True, duplicates="drop")
+
+                # Формируем читаемые метки интервалов
+                for i in range(len(real_bins) - 1):
+                    lower = round(real_bins[i], 2)
+                    upper = round(real_bins[i + 1], 2)
+                    interval_labels.append(f"{lower} — {upper}")
+
+                # Перезаписываем группу на красивые метки
+                df[f"{var}_group"] = pd.cut(df[var], bins=real_bins, labels=interval_labels, include_lowest=True)
+
+                bin_info[var] = {
+                    "original": var,
+                    "binned": f"{var}_group",
+                    "intervals": interval_labels,
+                    "n_bins": n_bins,
+                    "method": bin_method,
+                }
+
+                if var == row_var:
+                    row_var = f"{var}_group"
+                else:
+                    col_var = f"{var}_group"
+
+            except Exception as e:
+                logger.warning(f"Не удалось выполнить {bin_method} для {var}: {e}")
+                # Если биннинг не удался — оставляем как есть
+
+    # Построение таблицы
     if values:
-        # Агрегация по значениям (например, средняя успеваемость)
         table = pd.pivot_table(df, values=values, index=row_var, columns=col_var, aggfunc=aggfunc, fill_value=0)
     else:
-        # Просто подсчет частот
         table = pd.crosstab(df[row_var], df[col_var], normalize=normalize)
 
-    # Хи-квадрат тест (только для частот, не для средних)
+    # Хи-квадрат тест
     if not values and not normalize:
-        # Убеждаемся, что таблица не имеет нулевых строк/столбцов
         table_nonzero = table.loc[(table.sum(axis=1) > 0), (table.sum(axis=0) > 0)]
         if table_nonzero.shape[0] > 1 and table_nonzero.shape[1] > 1:
             chi2, p_value, dof, expected = chi2_contingency(table_nonzero)
-            chi2_result = {"chi2": chi2, "p_value": p_value, "dof": dof, "significant": p_value < 0.05}
+            chi2_result = {
+                "chi2": float(chi2),
+                "p_value": float(p_value),
+                "dof": int(dof),
+                "significant": p_value < 0.05,
+            }
         else:
             chi2_result = None
     else:
         chi2_result = None
 
-    # Визуализация (heatmap)
+    # Визуализация
     fig = px.imshow(
         table,
         text_auto=True,
@@ -80,40 +125,16 @@ def create_crosstab(df, row_var, col_var, values=None, aggfunc="count", normaliz
     )
     fig.update_layout(xaxis_title=col_var, yaxis_title=row_var)
 
-    # Создаем копию таблицы и сбрасываем индекс
     table_for_bar = table.reset_index()
+    melted = pd.melt(
+        table_for_bar,
+        id_vars=[row_var if isinstance(row_var, str) else row_var],
+        var_name="category",
+        value_name="count",
+    )
 
-    # Переименовываем колонки, чтобы избежать дублирования
-    new_column_names = []
-    for col in table_for_bar.columns:
-        if col == row_var:
-            new_column_names.append(row_var)
-        else:
-            # Для остальных колонок используем их строковое представление
-            new_column_names.append(str(col))
-
-    table_for_bar.columns = new_column_names
-
-    # Преобразуем в длинный формат
-    melted = pd.melt(table_for_bar, id_vars=[row_var], var_name="category", value_name="count")
-
-    # Удаляем возможные дубликаты
-    melted = melted.drop_duplicates().reset_index(drop=True)
-
-    # Очищаем от NaN
-    melted = melted.dropna(subset=["count"])
-
-    # Убеждаемся, что колонки уникальны
-    if melted.columns.duplicated().any():
-        # Если есть дубликаты, создаем новый DataFrame с уникальными именами
-        melted = melted.loc[:, ~melted.columns.duplicated()]
-
-    # Переименовываем колонку category в col_var для красоты
-    melted = melted.rename(columns={"category": col_var})
-
-    # Строим stacked bar chart
     fig_bar = px.bar(
-        melted, x=row_var, y="count", color=col_var, title=f"Распределение {row_var} по {col_var}", barmode="stack"
+        melted, x=row_var, y="count", color="category", title=f"Распределение по {col_var}", barmode="stack"
     )
 
     return {
@@ -123,6 +144,8 @@ def create_crosstab(df, row_var, col_var, values=None, aggfunc="count", normaliz
         "stacked_bar": fig_bar,
         "row_var": row_var,
         "col_var": col_var,
+        "bin_info": bin_info,
+        "auto_binned": bool(bin_info),
     }
 
 
@@ -153,7 +176,6 @@ def create_multi_crosstab(df, variables, target_var):
                 results[var] = create_crosstab(df, var, target_var)
             except Exception as e:
                 results[var] = {"error": str(e)}
-
     return results
 
 

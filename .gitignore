@@ -19,3 +19,4 @@ frontend/dist/*
 htmlcov/*
 .coverage
 .aider*
+node_modules/.cache/*

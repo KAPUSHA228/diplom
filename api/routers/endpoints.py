@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from ml_core.analyzer import ResearchAnalyzer
+from ml_core.error_handler import logger
 from ml_core.imputation import handle_missing_values, detect_outliers
 from ml_core.crosstab import create_crosstab, simple_crosstab
 from ml_core.features import create_feature_combinations
@@ -12,10 +13,10 @@ from ml_core.drift_detector import DataDriftDetector
 from ml_core.experiment_tracker import ExperimentTracker
 from ml_core.loader import get_sheet_preview
 from ..schemas import AnalysisRequest, CompositeRequest, SubsetRequest, FeatureCombinationRequest
-from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import pandas as pd
 import numpy as np
+from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/api/v1/analyze")
 
@@ -206,6 +207,13 @@ class CrosstabRequest(BaseModel):
     col_var: str
     values: Optional[str] = None
     aggfunc: str = "count"
+    normalize: bool = False
+    n_bins: int = Field(4, ge=2, le=10, description="Количество групп при автоматическом биннинге")
+    bin_method: str = Field(
+        "cut",
+        pattern="^(cut|qcut)$",
+        description="Метод разбиения: 'cut' - равные интервалы, 'qcut' - равное количество наблюдений",
+    )
 
 
 class TrajectoryRequest(BaseModel):
@@ -330,7 +338,7 @@ async def full_analysis(request: AnalysisRequest):
         return {
             "status": result.status,
             "message": result.message,
-            "config": analysis_config,  # <--- ВОТ ЭТО
+            "config": analysis_config,
             "metrics": scrub(result.metrics),
             "test_metrics": scrub(result.test_metrics),
             "cv_results": scrub(result.cv_results),
@@ -385,6 +393,8 @@ async def create_composite(request: CompositeRequest):
 async def select_subset(request: SubsetRequest):
     try:
         df = pd.DataFrame(request.df)
+
+        print("Subset request columns:", df.columns.tolist())
         subset = analyzer.select_subset(
             df,
             condition=request.condition,
@@ -394,6 +404,7 @@ async def select_subset(request: SubsetRequest):
         )
         return {"count": len(subset), "data": _safe_json_serializable(subset.to_dict("records"))}
     except Exception as e:
+        logger.error(f"Error in select_subset: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -464,7 +475,17 @@ async def build_crosstab(request: CrosstabRequest):
     """Построение кросс-таблицы с χ²-тестом."""
     try:
         df = pd.DataFrame(request.df)
-        result = create_crosstab(df, request.row_var, request.col_var, values=request.values, aggfunc=request.aggfunc)
+        result = create_crosstab(
+            df,
+            request.row_var,
+            request.col_var,
+            values=request.values,
+            aggfunc=request.aggfunc,
+            normalize=request.normalize,
+            auto_bin=True,
+            n_bins=request.n_bins,
+            bin_method=request.bin_method,
+        )
         print(f"[Crosstab Backend] table shape: {result['table'].shape}, first 3 rows:\n{result['table'].head(3)}")
         # Транспонируем: строки должны быть внешними ключами, колонки — внутренними
         table_dict = result["table"].T.to_dict()

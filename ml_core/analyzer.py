@@ -342,10 +342,29 @@ class ResearchAnalyzer:
         df = df.copy()
 
         if condition:
-            subset = df.query(condition)
+            try:
+                subset = df.query(condition)
+            except Exception as e:
+                raise ValueError(f"Ошибка в pandas query: {e}")
+
         elif by_cluster is not None:
-            subset = df[df["cluster"] == by_cluster]
-        elif n_samples:
+            # Ищем колонку с кластерами (самое частое — cluster_label или cluster)
+            cluster_col = None
+            for possible in ["cluster_label", "cluster", "Cluster", "cluster_id"]:
+                if possible in df.columns:
+                    cluster_col = possible
+                    break
+
+            if cluster_col is None:
+                available = [col for col in df.columns if "cluster" in col.lower()]
+                if available:
+                    cluster_col = available[0]
+                else:
+                    raise ValueError(f"Колонка с кластерами не найдена. Доступные колонки: {list(df.columns)}")
+
+            subset = df[df[cluster_col] == by_cluster]
+
+        elif n_samples is not None:
             subset = df.sample(n=min(n_samples, len(df)), random_state=random_seed)
         else:
             subset = df
