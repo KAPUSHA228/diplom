@@ -70,6 +70,7 @@ class AnalysisResponse(BaseModel):
     fig_fi: Optional[Dict[str, Any]] = None
     fig_clusters: Optional[Dict[str, Any]] = None
 
+    data_with_clusters: Optional[List[Dict[str, Any]]] = None
     data: Optional[List[Dict[str, Any]]] = None
 
 

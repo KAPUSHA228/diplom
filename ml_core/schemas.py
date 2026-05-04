@@ -1,13 +1,6 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Dict, Any
 
-# class AnalysisRequest(BaseModel):
-#     df: Any  # будем передавать как dict или использовать custom validator
-#     target_col: str
-#     n_clusters: int = 3
-#     risk_threshold: float = 0.5
-#     use_hp_tuning: bool = False
-
 
 class AnalysisRequest(BaseModel):
     """Запрос на выполнение полного анализа от бэкенда или UI"""
@@ -90,20 +83,9 @@ class AnalysisResult(BaseModel):
     model_name: Optional[str] = None
     timestamp: Optional[str] = None
 
+    data_with_clusters: Optional[List[Dict[str, Any]]] = None
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
-
-
-# class AnalysisResult(BaseModel):
-#     metrics: Dict[str, Any]
-#     test_metrics: Dict[str, float]
-#     selected_features: List[str]
-#     cluster_profiles: Dict[str, Any]
-#     explanations: List[Dict[str, Any]]
-#     drift_report: Optional[Dict[str, Any]] = None
-#     status: str = "success"
-#     message: Optional[str] = None
-#     composite_scores_created: Optional[List[str]] = None
-#     cv_results: dict = Field(default_factory=dict)
 
 
 class TrajectoryRequest(BaseModel):

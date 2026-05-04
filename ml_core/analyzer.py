@@ -229,14 +229,21 @@ class ResearchAnalyzer:
                 fig_roc = None
                 fig_fi = None
 
-            # ==========================================
+            df_with_clusters = df.copy()
+            # Убеждаемся, что колонка существует
+            if "cluster" not in df_with_clusters.columns:
+                df_with_clusters["cluster"] = cluster_labels
+
+            self.last_df = df_with_clusters
 
             # Добавляем в результат
             return AnalysisResult(
                 metrics=metrics,
                 test_metrics=metrics.get("test", {}),
                 selected_features=all_features,
-                cluster_profiles=cluster_profiles.to_dict(),
+                cluster_profiles=(
+                    cluster_profiles.to_dict() if hasattr(cluster_profiles, "to_dict") else cluster_profiles
+                ),
                 explanations=explanations or [],
                 cv_results=metrics.get("cv_results", {}),
                 status="success",
@@ -247,7 +254,8 @@ class ResearchAnalyzer:
                 fig_clusters=fig_clusters,
                 fig_corr=fig_corr,
                 last_y_test=y_test.tolist() if hasattr(y_test, "tolist") else y_test,
-                last_y_pred=self.last_y_pred.tolist(),
+                last_y_pred=self.last_y_pred.tolist() if hasattr(self.last_y_pred, "tolist") else self.last_y_pred,
+                data_with_clusters=df_with_clusters.to_dict("records"),
             )
 
         except Exception as e:

@@ -346,6 +346,7 @@ async def full_analysis(request: AnalysisRequest):
             "cluster_profiles": scrub(result.cluster_profiles),
             "explanations": scrub(result.explanations),
             "predictions": _safe_json_serializable(predictions),
+            "data_with_clusters": result.data_with_clusters,
             # Передаем графики
             "fig_cm": plot_to_json(result.fig_cm),
             "fig_roc": plot_to_json(result.fig_roc),
