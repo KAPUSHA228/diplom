@@ -278,7 +278,7 @@ def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None,
     mapping_config: словарь настроек от пользователя {col_name: {type: ..., map: ...}}
     """
     df = df.copy()
-    message = f"Лист '{sheet_name}' → группа: {sheet_group}"
+    message_parts = [f"Лист '{sheet_name}' → группа: {sheet_group}"]
 
     # Базовая очистка
     df = df.dropna(how="all").dropna(axis=1, how="all")
@@ -290,73 +290,77 @@ def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None,
         df["user_id"] = range(len(df))
         user_col = "user_id"
 
-    # Применяем обработку колонок
     processed_cols = set()
 
-    # 1. Применяем пользовательский конфиг, если есть
-    if mapping_config:
-        message += " (пользовательская настройка)"
-        for col_name, config in mapping_config.items():
+    # === 1. ПРИМЕНЯЕМ ПОЛЬЗОВАТЕЛЬСКИЙ КОНФИГ (высший приоритет) ===
+    if mapping_config and isinstance(mapping_config, dict) and mapping_config.get("columns"):
+        message_parts.append("(пользовательский mapping_config)")
+
+        for col_name, config in mapping_config.get("columns", {}).items():
             if col_name not in df.columns:
                 continue
 
             processed_cols.add(col_name)
             col_type = config.get("type")
 
-            if col_type == "one_hot":
-                dummies = pd.get_dummies(df[col_name], prefix=col_name)
-                df = pd.concat([df, dummies], axis=1)
-                df = df.drop(columns=[col_name])
+            if col_type == "multiple_choice" or col_type == "split":
+                sep = config.get("separator", ";")
+                df = process_multiple_choice_column(df, col_name, prefix=f"{col_name}_", separator=sep)
 
             elif col_type == "ordinal":
                 val_map = config.get("map", {})
-                df[col_name] = df[col_name].map(val_map).fillna(0).astype(int)
+                if val_map:
+                    df[col_name] = df[col_name].map(val_map)
 
-            elif col_type == "split":
-                sep = config.get("separator", ",")
-
-                def split_and_strip(text):
-                    if pd.isna(text):
-                        return []
-                    return [x.strip() for x in str(text).split(sep) if x.strip()]
-
-                all_tags = set()
-                for val in df[col_name]:
-                    all_tags.update(split_and_strip(val))
-
-                for tag in all_tags:
-                    clean_tag = tag.replace(" ", "_").replace("–", "_").replace("-", "_")
-                    new_col = f"{col_name}_{clean_tag}"
-                    df[new_col] = df[col_name].apply(lambda x: 1 if tag in split_and_strip(x) else 0)
+            elif col_type == "one_hot" or config.get("encoding") == "onehot":
+                dummies = pd.get_dummies(df[col_name], prefix=col_name, prefix_sep="_")
+                df = pd.concat([df, dummies], axis=1)
                 df = df.drop(columns=[col_name])
 
-    # 2. Стандартная обработка для остальных колонок
-    for col in df.columns:
-        if col in processed_cols or col in [user_col]:
+            # Применяем стратегию imputation из конфига
+            imp = config.get("imputation", "auto")
+            if imp != "none" and df[col_name].isna().any():
+                if imp == "median" and pd.api.types.is_numeric_dtype(df[col_name]):
+                    df[col_name] = df[col_name].fillna(df[col_name].median())
+                elif imp == "mean" and pd.api.types.is_numeric_dtype(df[col_name]):
+                    df[col_name] = df[col_name].fillna(df[col_name].mean())
+                elif imp == "mode":
+                    mode_val = df[col_name].mode()
+                    if not mode_val.empty:
+                        df[col_name] = df[col_name].fillna(mode_val[0])
+
+    # === 2. Автоматическая обработка оставшихся колонок ===
+    for col in list(df.columns):
+        if col in processed_cols or col == user_col:
             continue
 
-        # Удаление дат
-        if "дата" in str(col).lower() or "date" in str(col).lower():
+        # Удаляем колонки с датами
+        if any(x in str(col).lower() for x in ["дата", "date"]):
             df = df.drop(columns=[col])
             continue
 
+        # Multiple choice по группе листа
         if sheet_group == "multiple_choice" and df[col].dtype == "object":
-            # Авто-разбиение для множественного выбора
             prefix = f"{sheet_name.replace(' ', '_')}_" if sheet_name else ""
-            df = process_multiple_choice_column(df, col, prefix=prefix)
+            df = process_multiple_choice_column(df, col, prefix=prefix, separator=";")
         else:
-            # Попытка привести к числу
+            # Пытаемся привести к числу
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Если пропуск
-    if sheet_group == "skip" and not mapping_config:
-        message += " → пропущен"
-        return pd.DataFrame(), message
+    # === 3. Удаление служебных колонок ===
+    service_cols = [
+        col
+        for col in df.columns
+        if str(col).strip().lower()
+        in {"user", "user_id", "vk_id", "vk", "фамилия", "имя", "отчество", "вуз", "факультет"}
+    ]
 
-    # Пропуски НЕ заполняем автоматически — пользователь выберет стратегию в DataEnrichment
-    # Только удаляем дубликаты колонок
+    if service_cols:
+        df = df.drop(columns=service_cols)
+
     df = df.loc[:, ~df.columns.duplicated()]
 
+    message = " | ".join(message_parts)
     return df, message
 
 
@@ -391,7 +395,7 @@ def get_sheet_names(file_path: str) -> list:
     return xl.sheet_names
 
 
-def process_multiple_choice_column(df: pd.DataFrame, col: str, prefix: str = "") -> pd.DataFrame:
+def process_multiple_choice_column(df: pd.DataFrame, col: str, prefix: str = "", separator: str = ";") -> pd.DataFrame:
     """
     Разбивает колонку с множественным выбором на бинарные dummy-колонки.
     Например: "Волонтёрство, Спорт" → column_Волонтёрство=1, column_Спорт=1.
@@ -400,6 +404,7 @@ def process_multiple_choice_column(df: pd.DataFrame, col: str, prefix: str = "")
         df: исходный DataFrame
         col: имя колонки с множественным выбором
         prefix: префикс для новых колонок
+        seperator: разделитель
 
     Returns:
         pd.DataFrame: DataFrame с добавленными dummy-колонками
@@ -411,7 +416,7 @@ def process_multiple_choice_column(df: pd.DataFrame, col: str, prefix: str = "")
     df = df.copy()
 
     # Разделители, которые могут встречаться
-    separators = [", ", "; ", ",", ";", " | "]
+    separators = [separator, ", ", "; ", ",", ";", " | "]
 
     # Функция разбиения
     def split_choices(text):
@@ -435,7 +440,7 @@ def process_multiple_choice_column(df: pd.DataFrame, col: str, prefix: str = "")
 
     # Создаём one-hot колонки
     for choice in all_choices:
-        clean_choice = choice.replace(" ", "_").replace("-", "_").replace("–", "_")
+        clean_choice = choice.replace(" ", "_").replace("-", "_").replace("–", "_").replace("/", "_")
         new_col_name = f"{prefix}{clean_choice}" if prefix else clean_choice
         df[new_col_name] = df[col].apply(lambda x: 1 if choice in split_choices(x) else 0)
 
