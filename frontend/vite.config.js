@@ -3,7 +3,6 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 //import legacy from "@vitejs/plugin-legacy";
 /**TODO legacy addon*/
-import FaviconManifest from "vite-favicon-manifest";
 
 export default defineConfig({
   plugins: [
@@ -15,13 +14,6 @@ export default defineConfig({
         "./ARMApp": "./src/App.jsx",
       },
       shared: ["react", "react-dom"],
-    }),
-    FaviconManifest({
-      icon: "public/favicon.ico",
-      manifest: {
-        name: "Student Risk Platform",
-        description: "АРМ исследователя",
-      },
     }),
   ],
   server: {

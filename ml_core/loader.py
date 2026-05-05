@@ -5,6 +5,8 @@
 
 import pandas as pd
 
+from ml_core.error_handler import logger
+
 SHEET_TYPE_PATTERNS = {
     "category1_numeric": {  # Вильямс, Шварц, Триандис, соц14
         "keywords": [
@@ -292,49 +294,55 @@ def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None,
 
     processed_cols = set()
 
-    # === 1. ПРИМЕНЯЕМ ПОЛЬЗОВАТЕЛЬСКИЙ КОНФИГ (высший приоритет) ===
+    # === 1. ПРИМЕНЯЕМ ПОЛЬЗОВАТЕЛЬСКИЙ КОНФИГ (mapping) ===
     if mapping_config and isinstance(mapping_config, dict) and mapping_config.get("columns"):
         message_parts.append("(пользовательский mapping_config)")
 
-        for col_name, config in mapping_config.get("columns", {}).items():
-            if col_name not in df.columns:
+        for original_name, col_config in mapping_config.get("columns", {}).items():
+            # Устойчивое сопоставление имён колонок
+            matching_col = None
+            for existing_col in df.columns:
+                if str(existing_col).strip() == str(original_name).strip():
+                    matching_col = existing_col
+                    break
+                if str(existing_col).strip().lower().replace("–", "-").replace("—", "-") == str(
+                    original_name
+                ).strip().lower().replace("–", "-").replace("—", "-"):
+                    matching_col = existing_col
+                    break
+
+            if matching_col is None:
+                logger.warning(f"Колонка '{original_name}' не найдена в DataFrame")
                 continue
 
-            processed_cols.add(col_name)
-            col_type = config.get("type")
+            processed_cols.add(matching_col)
+            col_type = col_config.get("type")
 
-            if col_type == "multiple_choice" or col_type == "split":
-                sep = config.get("separator", ";")
-                df = process_multiple_choice_column(df, col_name, prefix=f"{col_name}_", separator=sep)
+            try:
+                if col_type in ["multiple_choice", "split"]:
+                    sep = col_config.get("separator", ";")
+                    df = process_multiple_choice_column(df, matching_col, prefix=f"{matching_col}_", separator=sep)
 
-            elif col_type == "ordinal":
-                val_map = config.get("map", {})
-                if val_map:
-                    df[col_name] = df[col_name].map(val_map)
+                elif col_type == "ordinal":
+                    val_map = col_config.get("map", {})
+                    if val_map:
+                        df[matching_col] = df[matching_col].map(val_map)
 
-            elif col_type == "one_hot" or config.get("encoding") == "onehot":
-                dummies = pd.get_dummies(df[col_name], prefix=col_name, prefix_sep="_")
-                df = pd.concat([df, dummies], axis=1)
-                df = df.drop(columns=[col_name])
+                elif col_type == "one_hot" or col_config.get("encoding") == "onehot":
+                    dummies = pd.get_dummies(df[matching_col], prefix=matching_col, prefix_sep="_")
+                    df = pd.concat([df, dummies], axis=1)
+                    df = df.drop(columns=[matching_col])
 
-            # Применяем стратегию imputation из конфига
-            imp = config.get("imputation", "auto")
-            if imp != "none" and df[col_name].isna().any():
-                if imp == "median" and pd.api.types.is_numeric_dtype(df[col_name]):
-                    df[col_name] = df[col_name].fillna(df[col_name].median())
-                elif imp == "mean" and pd.api.types.is_numeric_dtype(df[col_name]):
-                    df[col_name] = df[col_name].fillna(df[col_name].mean())
-                elif imp == "mode":
-                    mode_val = df[col_name].mode()
-                    if not mode_val.empty:
-                        df[col_name] = df[col_name].fillna(mode_val[0])
+            except Exception as e:
+                logger.error(f"Ошибка обработки колонки '{matching_col}' (type={col_type}): {e}", exc_info=True)
+                raise
 
     # === 2. Автоматическая обработка оставшихся колонок ===
     for col in list(df.columns):
         if col in processed_cols or col == user_col:
             continue
 
-        # Удаляем колонки с датами
+        # Удаляем даты
         if any(x in str(col).lower() for x in ["дата", "date"]):
             df = df.drop(columns=[col])
             continue
@@ -343,8 +351,9 @@ def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None,
         if sheet_group == "multiple_choice" and df[col].dtype == "object":
             prefix = f"{sheet_name.replace(' ', '_')}_" if sheet_name else ""
             df = process_multiple_choice_column(df, col, prefix=prefix, separator=";")
+
         else:
-            # Пытаемся привести к числу
+            # Приводим к числу всё остальное
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # === 3. Удаление служебных колонок ===
@@ -354,7 +363,6 @@ def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None,
         if str(col).strip().lower()
         in {"user", "user_id", "vk_id", "vk", "фамилия", "имя", "отчество", "вуз", "факультет"}
     ]
-
     if service_cols:
         df = df.drop(columns=service_cols)
 
@@ -404,7 +412,7 @@ def process_multiple_choice_column(df: pd.DataFrame, col: str, prefix: str = "",
         df: исходный DataFrame
         col: имя колонки с множественным выбором
         prefix: префикс для новых колонок
-        seperator: разделитель
+        separator: разделитель
 
     Returns:
         pd.DataFrame: DataFrame с добавленными dummy-колонками
