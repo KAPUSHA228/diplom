@@ -4,7 +4,7 @@ import os
 
 from ml_core.experiment_tracker import ExperimentTracker
 from shared.utils import safe_json_serializable
-from api.experiments_service.schemas import ExperimentSaveRequest
+from .schemas import ExperimentSaveRequest
 
 router = APIRouter(prefix="/api/v1/analyze")
 

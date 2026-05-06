@@ -101,26 +101,56 @@ class TestExcelSheetPreprocessing:
 
     def test_preprocess_with_ordinal_mapping(self):
         df = pd.DataFrame({"level": ["Низкая", "Средняя", "Высокая"], "value": [1, 2, 3]})
-        mapping = {"level": {"type": "ordinal", "mapping": {"Низкая": 1, "Средняя": 2, "Высокая": 3}}}
+        mapping = {
+            "columns": {
+                "level": {"type": "ordinal", "map": {"Низкая": 1, "Средняя": 2, "Высокая": 3}},
+            }
+        }
         result, meta = preprocess_sheet(df, sheet_group="single_choice", mapping_config=mapping)
         assert result["level"].dtype in [np.float64, np.int64, float, int]
 
     def test_preprocess_with_onehot_encoding(self):
         df = pd.DataFrame({"color": ["red", "blue", "green"]})
-        mapping = {"color": {"type": "onehot"}}
+        mapping = {"columns": {"color": {"type": "onehot"}}}
         result, meta = preprocess_sheet(df, sheet_group="single_choice", mapping_config=mapping)
         assert len(result.columns) > 1
 
     def test_preprocess_with_split(self):
         df = pd.DataFrame({"choices": ["a;b", "b;c", "a"]})
-        mapping = {"choices": {"type": "split", "separator": ";"}}
+        mapping = {"columns": {"choices": {"type": "split", "separator": ";"}}}
         result, meta = preprocess_sheet(df, sheet_group="multiple_choice", mapping_config=mapping)
         assert len(result.columns) >= 2
 
-    def test_preprocess_skip_sheet(self):
+    def test_preprocess_single_choice_auto_onehot_phrases(self):
+        df = pd.DataFrame({"Q": ["согласен", "не согласен", "согласен"]})
+        result, meta = preprocess_sheet(df, sheet_group="single_choice")
+        dummy_cols = [c for c in result.columns if str(c).startswith("Q_")]
+        assert len(dummy_cols) >= 2
+
+    def test_preprocess_single_choice_auto_numeric_strings(self):
+        df = pd.DataFrame({"Q": ["1", "2", "3", "4"]})
+        result, meta = preprocess_sheet(df, sheet_group="single_choice")
+        assert "Q" in result.columns
+        assert pd.api.types.is_numeric_dtype(result["Q"])
+
+    def test_preprocess_skip_sheet_preserves_object_columns(self):
+        df = pd.DataFrame({"free": ["слово1", "слово2"], "n": [1, 2]})
+        result, meta = preprocess_sheet(df, sheet_group="skip", sheet_name="t")
+        assert "free" in result.columns
+        assert result["free"].dtype == object
+        assert pd.api.types.is_numeric_dtype(result["n"])
+
+    def test_preprocess_skip_sheet_numeric_only(self):
         df = pd.DataFrame({"a": [1, 2, 3]})
         result, meta = preprocess_sheet(df, sheet_group="skip")
-        assert result is None or len(result) == 0
+        assert len(result) == 3
+        assert pd.api.types.is_numeric_dtype(result["a"])
+
+    def test_normalize_sheet_group_category_keys(self):
+        from ml_core.loader import normalize_sheet_group
+
+        assert normalize_sheet_group("category3_single_choice") == "single_choice"
+        assert normalize_sheet_group("category4_multiple_choice") == "multiple_choice"
 
 
 class TestMultipleChoiceColumnProcessing:

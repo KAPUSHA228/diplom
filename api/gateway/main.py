@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.excel_service.main import router as excel_router
 from api.analyze_service.main import router as analyze_router
-from api.ml_service.main import router as ml_router
+from api.ml_service.main import router_ml, router_analyze_ml
 from api.experiments_service.main import router as experiments_router
 
 app = FastAPI(
@@ -26,7 +26,8 @@ app.add_middleware(
 
 app.include_router(excel_router)  # /excel/preview, /excel/process, /imputation/handle
 app.include_router(analyze_router)  # /crosstab, /timeseries/*, /drift/check
-app.include_router(ml_router)  # /full, /composite, /subset
+app.include_router(router_ml)  # /api/v1/ml/* — train, predict, shap, tasks
+app.include_router(router_analyze_ml)  # /api/v1/analyze/full, /composite/create, /subset/select
 app.include_router(experiments_router)  # /experiments/*, /metrics/history
 
 

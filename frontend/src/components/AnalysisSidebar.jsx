@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-export default function AnalysisSidebar({ onRun, busy, disabled = false }) {
+export default function AnalysisSidebar({ onRun, busy, canRun = false }) {
   const [nClusters, setNClusters] = useState(3);
   const [riskThreshold, setRiskThreshold] = useState(0.5);
   const [corrThreshold, setCorrThreshold] = useState(0.3);
@@ -40,7 +40,10 @@ export default function AnalysisSidebar({ onRun, busy, disabled = false }) {
       <label>
         Число кластеров: <b>{nClusters}</b>
         <input
-          type="range" min="2" max="6" value={nClusters}
+          type="range"
+          min="2"
+          max="6"
+          value={nClusters}
           onChange={(e) => setNClusters(Number(e.target.value))}
         />
       </label>
@@ -48,7 +51,11 @@ export default function AnalysisSidebar({ onRun, busy, disabled = false }) {
       <label>
         Порог риска: <b>{riskThreshold.toFixed(2)}</b>
         <input
-          type="range" min="0" max="1" step="0.05" value={riskThreshold}
+          type="range"
+          min="0"
+          max="1"
+          step="0.05"
+          value={riskThreshold}
           onChange={(e) => setRiskThreshold(Number(e.target.value))}
         />
       </label>
@@ -56,7 +63,11 @@ export default function AnalysisSidebar({ onRun, busy, disabled = false }) {
       <label>
         Порог корреляции: <b>{corrThreshold.toFixed(2)}</b>
         <input
-          type="range" min="0" max="1" step="0.05" value={corrThreshold}
+          type="range"
+          min="0"
+          max="1"
+          step="0.05"
+          value={corrThreshold}
           onChange={(e) => setCorrThreshold(Number(e.target.value))}
         />
       </label>
@@ -64,7 +75,10 @@ export default function AnalysisSidebar({ onRun, busy, disabled = false }) {
       <label>
         Признаков в финальной модели: <b>{nFeatures}</b>
         <input
-          type="range" min="3" max="15" value={nFeatures}
+          type="range"
+          min="3"
+          max="15"
+          value={nFeatures}
           onChange={(e) => setNFeatures(Number(e.target.value))}
         />
       </label>
@@ -72,15 +86,30 @@ export default function AnalysisSidebar({ onRun, busy, disabled = false }) {
       <label>
         Кол-во факторов в SHAP: <b>{shapTopN}</b>
         <input
-          type="range" min="3" max="10" value={shapTopN}
+          type="range"
+          min="3"
+          max="10"
+          value={shapTopN}
           onChange={(e) => setShapTopN(Number(e.target.value))}
         />
       </label>
 
       <label className="checkbox-label">
-        <div style={{ marginBottom: 4, fontSize: 13, fontWeight: 600 }}>Приоритетная метрика:</div>
-        <select value={optimizationMetric} onChange={(e) => setOptimizationMetric(e.target.value)}
-          style={{ width: "100%", padding: 4, borderRadius: 4, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }}>
+        <div style={{ marginBottom: 4, fontSize: 13, fontWeight: 600 }}>
+          Приоритетная метрика:
+        </div>
+        <select
+          value={optimizationMetric}
+          onChange={(e) => setOptimizationMetric(e.target.value)}
+          style={{
+            width: "100%",
+            padding: 4,
+            borderRadius: 4,
+            border: "1px solid var(--border)",
+            background: "var(--bg)",
+            color: "var(--text)",
+          }}
+        >
           <option value="default">По умолчанию (F1)</option>
           <option value="f1">F1-score</option>
           <option value="roc_auc">ROC-AUC</option>
@@ -89,27 +118,49 @@ export default function AnalysisSidebar({ onRun, busy, disabled = false }) {
         </select>
       </label>
 
-      <div style={{ marginTop: 12, marginBottom: 8, fontWeight: 600 }}>Модели для обучения:</div>
+      <div style={{ marginTop: 12, marginBottom: 8, fontWeight: 600 }}>
+        Модели для обучения:
+      </div>
       <label className="checkbox-label">
-        <input type="checkbox" checked={useLR} onChange={(e) => setUseLR(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={useLR}
+          onChange={(e) => setUseLR(e.target.checked)}
+        />
         Logistic Regression
       </label>
       <label className="checkbox-label">
-        <input type="checkbox" checked={useRF} onChange={(e) => setUseRF(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={useRF}
+          onChange={(e) => setUseRF(e.target.checked)}
+        />
         Random Forest
       </label>
       <label className="checkbox-label">
-        <input type="checkbox" checked={useXGB} onChange={(e) => setUseXGB(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={useXGB}
+          onChange={(e) => setUseXGB(e.target.checked)}
+        />
         XGBoost
       </label>
 
       <label className="checkbox-label" style={{ marginTop: 8 }}>
-        <input type="checkbox" checked={useSmote} onChange={(e) => setUseSmote(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={useSmote}
+          onChange={(e) => setUseSmote(e.target.checked)}
+        />
         SMOTE (балансировка классов)
       </label>
 
       <label className="checkbox-label">
-        <input type="checkbox" checked={useHpTuning} onChange={(e) => setUseHpTuning(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={useHpTuning}
+          onChange={(e) => setUseHpTuning(e.target.checked)}
+        />
         Оптимизация гиперпараметров (XGB)
       </label>
 
@@ -117,19 +168,31 @@ export default function AnalysisSidebar({ onRun, busy, disabled = false }) {
         <label>
           Итераций тюнинга: <b>{nIterTuning}</b>
           <input
-            type="range" min="10" max="50" value={nIterTuning}
+            type="range"
+            min="10"
+            max="50"
+            value={nIterTuning}
             onChange={(e) => setNIterTuning(Number(e.target.value))}
           />
         </label>
       )}
 
-      <button className="primary" onClick={handleSubmit} disabled={busy || disabled} style={{ marginTop: 12 }}>
-        {busy ? "⏳ Анализ..." : disabled ? "🎯 Сначала выберите цель" : "🚀 Запустить анализ"}
+      <button
+        className="primary"
+        onClick={handleSubmit}
+        disabled={!canRun}
+        style={{ marginTop: 12 }}
+      >
+        {busy
+          ? "⏳ Анализ..."
+          : !canRun
+            ? "🎯 Загрузите данные и выберите цель"
+            : "🚀 Запустить анализ"}
       </button>
 
       <p className="hint">
-        {disabled
-          ? "⬆️ Сначала загрузите файл и выберите целевую переменную"
+        {!canRun && !busy
+          ? "⬆️ Нужны загруженные данные и подтверждённая целевая переменная (или дождитесь окончания текущего запроса)."
           : "Настройки не влияют на данные, пока не нажата кнопка «Запустить анализ»."}
       </p>
     </aside>

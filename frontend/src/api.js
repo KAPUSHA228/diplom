@@ -41,7 +41,7 @@ export async function uploadForCorrelation(file, sheetName = null) {
   const form = new FormData();
   form.append("file", file);
   if (sheetName) form.append("sheet_name", sheetName);
-  return request("/api/v1/ml/correlation", { method: "POST", body: form });
+  return request("/api/v1/analyze/correlation", { method: "POST", body: form });
 }
 
 // ==================== Новые эндпоинты (endpoints.py) ====================

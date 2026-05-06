@@ -93,6 +93,25 @@ def detect_sheet_group(columns, sheet_name=None):
     return best_group
 
 
+def normalize_sheet_group(sheet_group: str | None) -> str:
+    """
+    Приводит группу листа к каноническим именам.
+    Вызовы с ключами паттернов (category3_single_choice) дают то же поведение, что и single_choice.
+    """
+    if not sheet_group:
+        return "unknown"
+    sg = str(sheet_group).strip()
+    if sg in ("numeric", "single_choice", "multiple_choice", "skip", "unknown"):
+        return sg
+    key_to_group = {
+        "category1_numeric": "numeric",
+        "category2_mednik": "skip",
+        "category3_single_choice": "single_choice",
+        "category4_multiple_choice": "multiple_choice",
+    }
+    return key_to_group.get(sg, sg)
+
+
 def detect_sheet_type_by_columns(columns, sheet_name=None):
     """
     Определяет конкретный тип листа по содержимому колонок и имени.
@@ -280,6 +299,7 @@ def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None,
     mapping_config: словарь настроек от пользователя {col_name: {type: ..., map: ...}}
     """
     df = df.copy()
+    sheet_group = normalize_sheet_group(sheet_group)
     message_parts = [f"Лист '{sheet_name}' → группа: {sheet_group}"]
 
     # Базовая очистка
@@ -295,10 +315,24 @@ def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None,
     processed_cols = set()
 
     # === 1. ПРИМЕНЯЕМ ПОЛЬЗОВАТЕЛЬСКИЙ КОНФИГ (mapping) ===
-    if mapping_config and isinstance(mapping_config, dict) and mapping_config.get("columns"):
+    columns_mapping = None
+    if mapping_config and isinstance(mapping_config, dict):
+        columns_mapping = mapping_config.get("columns")
+        if not columns_mapping:
+            reserved = {
+                "sheet_name",
+                "sheet_type",
+                "global_settings",
+                "detected_group",
+                "columns",
+            }
+            if mapping_config.keys() and not (set(mapping_config.keys()) & reserved):
+                columns_mapping = mapping_config
+
+    if columns_mapping:
         message_parts.append("(пользовательский mapping_config)")
 
-        for original_name, col_config in mapping_config.get("columns", {}).items():
+        for original_name, col_config in columns_mapping.items():
             # Устойчивое сопоставление имён колонок
             matching_col = None
             for existing_col in df.columns:
@@ -319,16 +353,20 @@ def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None,
             col_type = col_config.get("type")
 
             try:
+                if col_type == "skip":
+                    continue
+
                 if col_type in ["multiple_choice", "split"]:
                     sep = col_config.get("separator", ";")
                     df = process_multiple_choice_column(df, matching_col, prefix=f"{matching_col}_", separator=sep)
 
                 elif col_type == "ordinal":
-                    val_map = col_config.get("map", {})
+                    val_map = col_config.get("map") or col_config.get("mapping") or {}
                     if val_map:
-                        df[matching_col] = df[matching_col].map(val_map)
+                        mapped = df[matching_col].map(val_map)
+                        df[matching_col] = pd.to_numeric(mapped, errors="coerce")
 
-                elif col_type == "one_hot" or col_config.get("encoding") == "onehot":
+                elif col_type in ("one_hot", "categorical") or col_config.get("encoding") == "onehot":
                     dummies = pd.get_dummies(df[matching_col], prefix=matching_col, prefix_sep="_")
                     df = pd.concat([df, dummies], axis=1)
                     df = df.drop(columns=[matching_col])
@@ -347,13 +385,36 @@ def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None,
             df = df.drop(columns=[col])
             continue
 
-        # Multiple choice по группе листа
+        # Multiple choice по группе листа — dummy-столбцы по вариантам ответа
         if sheet_group == "multiple_choice" and df[col].dtype == "object":
             prefix = f"{sheet_name.replace(' ', '_')}_" if sheet_name else ""
             df = process_multiple_choice_column(df, col, prefix=prefix, separator=";")
 
+        elif sheet_group == "single_choice" and df[col].dtype == "object":
+            # Без явного маппинга: числовые строки оставляем числом, иначе one-hot (как разумный дефолт)
+            num = pd.to_numeric(df[col], errors="coerce")
+            if num.notna().mean() >= 0.95:
+                df[col] = num
+            else:
+                dummies = pd.get_dummies(df[col], prefix=col, prefix_sep="_", dummy_na=False)
+                df = df.drop(columns=[col])
+                df = pd.concat([df, dummies], axis=1)
+
+        elif sheet_group == "unknown" and df[col].dtype == "object":
+            num = pd.to_numeric(df[col], errors="coerce")
+            if num.notna().mean() >= 0.95:
+                df[col] = num
+            else:
+                dummies = pd.get_dummies(df[col], prefix=col, prefix_sep="_", dummy_na=False)
+                df = df.drop(columns=[col])
+                df = pd.concat([df, dummies], axis=1)
+
+        elif sheet_group == "skip" and df[col].dtype == "object":
+            # Свободный текст / смысловой «скип» — не кодируем в числа (позже LLM)
+            continue
+
         else:
-            # Приводим к числу всё остальное
+            # numeric и прочие: приводим к числу
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # === 3. Удаление служебных колонок ===

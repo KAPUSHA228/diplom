@@ -12,7 +12,11 @@ from ml_core.error_handler import logger
 from workers.tasks import train_model_task, shap_task
 from ml_core.models import ModelTrainer
 
-from ..ml_service.schemas import (
+from fastapi import APIRouter, HTTPException
+import pandas as pd
+from ml_core.analyzer import ResearchAnalyzer
+from .schemas import (
+    AnalysisRequest,
     PredictRequest,
     PredictResponse,
     TaskStatus,
@@ -20,10 +24,6 @@ from ..ml_service.schemas import (
     SubsetRequest,
     CompositeRequest,
 )
-from fastapi import APIRouter, HTTPException
-import pandas as pd
-from ml_core.analyzer import ResearchAnalyzer
-from .schemas import AnalysisRequest
 from shared.utils import safe_json_serializable
 from shared.utils import scrub
 
@@ -31,13 +31,15 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
 app = FastAPI(title="ML Service", description="ML модели и обучение", version="1.0.0")
-router = APIRouter(prefix="/api/v1/ml")
+# Два роутера: не переиспользовать одну переменную — иначе теряются маршруты первого префикса.
+router_ml = APIRouter(prefix="/api/v1/ml")
+router_analyze_ml = APIRouter(prefix="/api/v1/analyze")
 
 # Инициализация трейнера
 trainer = ModelTrainer()
 
 
-@router.post("/train_async")
+@router_ml.post("/train_async")
 async def train_async_json(data: Dict[str, Any]):
     """Запуск асинхронного обучения (принимает JSON)."""
     if "df" not in data or not data["df"]:
@@ -52,7 +54,7 @@ async def train_async_json(data: Dict[str, Any]):
     return {"task_id": task.id, "status": "started"}
 
 
-@router.post("/predict", response_model=PredictResponse)
+@router_ml.post("/predict", response_model=PredictResponse)
 async def predict(request: PredictRequest):
     """Синхронное предсказание для одного студента."""
     try:
@@ -84,7 +86,7 @@ async def predict(request: PredictRequest):
         raise HTTPException(500, f"Prediction failed: {e}")
 
 
-@router.post("/train", response_model=TrainResponse)
+@router_ml.post("/train", response_model=TrainResponse)
 async def train_model(file: UploadFile = File(...)):
     """Запуск обучения модели в фоне через Celery."""
     content = await file.read()
@@ -100,7 +102,7 @@ async def train_model(file: UploadFile = File(...)):
     return TrainResponse(task_id=task.id, status="started")
 
 
-@router.get("/train/{task_id}", response_model=TaskStatus)
+@router_ml.get("/train/{task_id}", response_model=TaskStatus)
 async def get_train_status(task_id: str):
     """Получить статус задачи обучения."""
     try:
@@ -121,13 +123,13 @@ async def get_train_status(task_id: str):
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
 
-@router.get("/tasks/{task_id}", response_model=TaskStatus)
+@router_ml.get("/tasks/{task_id}", response_model=TaskStatus)
 async def get_unified_task_status(task_id: str):
     """Унифицированный статус для любых фоновых задач."""
     return await get_train_status(task_id)
 
 
-@router.post("/shap", response_model=TrainResponse)
+@router_ml.post("/shap", response_model=TrainResponse)
 async def generate_shap(file: UploadFile = File(...), model_id: str = "XGB"):
     """Запуск SHAP-объяснений в фоне через Celery."""
     content = await file.read()
@@ -143,13 +145,11 @@ async def generate_shap(file: UploadFile = File(...), model_id: str = "XGB"):
     return TrainResponse(task_id=task.id, status="started")
 
 
-router = APIRouter(prefix="/api/v1/analyze")
-
 # Один экземпляр анализатора на всё приложение
 analyzer = ResearchAnalyzer()
 
 
-@router.post("/full")
+@router_analyze_ml.post("/full")
 async def full_analysis(request: AnalysisRequest):
     try:
         df = pd.DataFrame(request.df)
@@ -245,7 +245,7 @@ async def full_analysis(request: AnalysisRequest):
         raise HTTPException(status_code=500, detail=f"Ошибка анализа: {str(e)}")
 
 
-@router.post("/composite/create")
+@router_analyze_ml.post("/composite/create")
 async def create_composite(request: CompositeRequest):
     try:
         df = pd.DataFrame(request.df)
@@ -276,7 +276,7 @@ async def create_composite(request: CompositeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/subset/select")
+@router_analyze_ml.post("/subset/select")
 async def select_subset(request: SubsetRequest):
     try:
         df = pd.DataFrame(request.df)
@@ -295,8 +295,8 @@ async def select_subset(request: SubsetRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Подключаем роутер к приложению
-app.include_router(router)
+app.include_router(router_ml)
+app.include_router(router_analyze_ml)
 
 
 if __name__ == "__main__":
