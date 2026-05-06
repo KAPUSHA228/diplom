@@ -133,6 +133,8 @@ function MainPage() {
   const [Plot, setPlot] = useState(null);
 
   const shared = useSharedData();
+  const [restored, setRestored] = useState(false);
+
   const [file, setFile] = useState(null);
   const [csvData, setCsvData] = useState(null);
   const [csvPreview, setCsvPreview] = useState({
@@ -153,7 +155,13 @@ function MainPage() {
 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-
+  useEffect(() => {
+    if (!restored && shared.datasetId) {
+      shared.loadFromDB(shared.datasetId).then(() => {
+        setRestored(true);
+      });
+    }
+  }, [shared.datasetId, shared.loadFromDB, restored]);
   useEffect(() => {
     import("react-plotly.js").then((module) => setPlot(() => module.default));
   }, []);
