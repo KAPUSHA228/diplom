@@ -1,7 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, lazy } from "react";
 import { HashRouter, Routes, Route, Link, useLocation } from "react-router-dom";
-import Plot from "react-plotly.js";
-import * as XLSX from "xlsx";
 import {
   healthcheck,
   uploadForCorrelation,
@@ -11,22 +9,24 @@ import {
   trainAsyncJson,
   getTaskStatus,
   saveExperiment,
-  listExperiments,
 } from "./api";
-import AnalysisSidebar from "./components/AnalysisSidebar";
-import AnalysisResults from "./components/AnalysisResults";
-import SheetMapper from "./components/SheetMapper";
-import DataEnrichment from "./components/DataEnrichment";
-import Imputation from "./components/Imputation";
-import DriftCheck from "./components/DriftCheck";
-import Crosstab from "./components/Crosstab";
-import TimeSeries from "./components/TimeSeries";
-import CompositeScore from "./components/CompositeScore";
-import Experiments from "./components/Experiments";
-import SubsetSelect from "./components/SubsetSelect";
-import FeatureCombinations from "./components/FeatureCombinations";
+// Все компоненты, которые не видны сразу, загружаем лениво
+const AnalysisSidebar = lazy(() => import("./components/AnalysisSidebar"));
+const AnalysisResults = lazy(() => import("./components/AnalysisResults"));
+const SheetMapper = lazy(() => import("./components/SheetMapper"));
+const DataEnrichment = lazy(() => import("./components/DataEnrichment"));
+const Imputation = lazy(() => import("./components/Imputation"));
+const DriftCheck = lazy(() => import("./components/DriftCheck"));
+const Crosstab = lazy(() => import("./components/Crosstab"));
+const TimeSeries = lazy(() => import("./components/TimeSeries"));
+const CompositeScore = lazy(() => import("./components/CompositeScore"));
+const Experiments = lazy(() => import("./components/Experiments"));
+const SubsetSelect = lazy(() => import("./components/SubsetSelect"));
+const FeatureCombinations = lazy(
+  () => import("./components/FeatureCombinations"),
+);
 import { handleImputation } from "./api";
-import { useSharedData } from "./hooks/useSharedData";
+import { useSharedData } from "./hooks/useDatasetStore";
 import "./styles.css";
 
 const NAV = [
@@ -46,7 +46,11 @@ function Tabs() {
   return (
     <div className="tabs">
       {NAV.map((n) => (
-        <Link key={n.path} to={n.path} className={location.pathname === n.path ? "active" : ""}>
+        <Link
+          key={n.path}
+          to={n.path}
+          className={location.pathname === n.path ? "active" : ""}
+        >
           {n.label}
         </Link>
       ))}
@@ -56,7 +60,9 @@ function Tabs() {
 
 /** Кнопка переключения темы */
 function ThemeToggle() {
-  const [dark, setDark] = useState(() => !document.documentElement.classList.contains("light"));
+  const [dark, setDark] = useState(
+    () => !document.documentElement.classList.contains("light"),
+  );
 
   function toggle() {
     document.documentElement.classList.toggle("light");
@@ -81,38 +87,60 @@ function PollingTask({ taskId, title }) {
       try {
         const status = await getTaskStatus(taskId);
         if (!stopped) setTask(status);
-        if (status.status === "SUCCESS" || status.status === "FAILURE") clearInterval(timer);
+        if (status.status === "SUCCESS" || status.status === "FAILURE")
+          clearInterval(timer);
       } catch (e) {
         if (!stopped) setError(String(e.message || e));
         clearInterval(timer);
       }
     }, 2000);
-    return () => { stopped = true; clearInterval(timer); };
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
   }, [taskId]);
 
   if (!taskId) return null;
   return (
     <div className="card">
       <h3>{title}</h3>
-      <p><b>Task ID:</b> {taskId}</p>
+      <p>
+        <b>Task ID:</b> {taskId}
+      </p>
       {error ? <p className="error">{error}</p> : null}
       {task ? (
         <>
-          <p><b>Статус:</b> {task.status}</p>
-          <p><b>Этап:</b> {task.stage || "-"} | <b>Прогресс:</b> {task.progress ?? 0}%</p>
-          {task.result ? <pre>{JSON.stringify(task.result, null, 2)}</pre> : null}
+          <p>
+            <b>Статус:</b> {task.status}
+          </p>
+          <p>
+            <b>Этап:</b> {task.stage || "-"} | <b>Прогресс:</b>{" "}
+            {task.progress ?? 0}%
+          </p>
+          {task.result ? (
+            <pre>{JSON.stringify(task.result, null, 2)}</pre>
+          ) : null}
           {task.error ? <pre className="error">{task.error}</pre> : null}
         </>
-      ) : <p>Ожидание обновлений...</p>}
+      ) : (
+        <p>Ожидание обновлений...</p>
+      )}
     </div>
   );
 }
 
 function MainPage() {
+  const [Plot, setPlot] = useState(null);
+
   const shared = useSharedData();
   const [file, setFile] = useState(null);
   const [csvData, setCsvData] = useState(null);
-  const [csvPreview, setCsvPreview] = useState({ headers: [], rows: [], rowCount: 0, riskPct: null });
+  const [csvPreview, setCsvPreview] = useState({
+    headers: [],
+    rows: [],
+    rowCount: 0,
+    riskPct: null,
+  });
   const [corrResult, setCorrResult] = useState(null);
   const [trainTaskId, setTrainTaskId] = useState("");
   const [analysisResult, setAnalysisResult] = useState(null);
@@ -126,19 +154,37 @@ function MainPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    import("react-plotly.js").then((module) => setPlot(() => module.default));
+  }, []);
   // Восстановление из shared dataset при монтировании (переключение вкладок / F5)
   useEffect(() => {
-    console.log("[MainPage] shared:", { hasShared: shared.hasShared, dataLen: shared.data?.length, csvData: !!csvData, file: !!file });
+    console.log("[MainPage] shared:", {
+      hasShared: shared.hasShared,
+      dataLen: shared.data?.length,
+      csvData: !!csvData,
+      file: !!file,
+    });
     if (shared.hasShared && !csvData && !file) {
       setCsvData(shared.data);
       if (shared.data.length > 0) {
         const headers = Object.keys(shared.data[0]);
-        const previewRows = shared.data.slice(0, 5).map(r => headers.map(h => String(r[h] ?? "")));
-        setCsvPreview({ headers, rows: previewRows, rowCount: shared.data.length });
-        console.log("[MainPage] данные восстановлены:", shared.data.length, "строк");
+        const previewRows = shared.data
+          .slice(0, 5)
+          .map((r) => headers.map((h) => String(r[h] ?? "")));
+        setCsvPreview({
+          headers,
+          rows: previewRows,
+          rowCount: shared.data.length,
+        });
+        console.log(
+          "[MainPage] данные восстановлены:",
+          shared.data.length,
+          "строк",
+        );
       }
     }
-  }, []);
+  }, [shared.hasShared, shared.data, csvData, file]);
 
   // Excel Mapping state
   const [sheetPreview, setSheetPreview] = useState(null); // Данные для SheetMapper
@@ -152,20 +198,36 @@ function MainPage() {
   const [targetSelected, setTargetSelected] = useState(false);
 
   // Служебные колонки — исключаем из выбора target И из превью
-  const EXCLUDE_COLS = new Set([
-    "user", "user_id", "vk_id", "vk id", "vk",
-    "фамилия", "имя", "отчество",
-    "вуз", "факультет", "группа", "курс",
-    "пол", "возраст",
-    "дата", "date",
-    "направление подготовки",
-    "_source_sheet", "_sheet_type",
-  ]);
+  const EXCLUDE_COLS = useMemo(
+    () =>
+      new Set([
+        "user",
+        "user_id",
+        "vk_id",
+        "vk id",
+        "vk",
+        "фамилия",
+        "имя",
+        "отчество",
+        "вуз",
+        "факультет",
+        "группа",
+        "курс",
+        "пол",
+        "возраст",
+        "дата",
+        "date",
+        "направление подготовки",
+        "_source_sheet",
+        "_sheet_type",
+      ]),
+    [],
+  );
 
   // Фильтрация служебных колонок из клиентских данных
   function filterServiceCols(data) {
     if (!data || !data.length) return data;
-    return data.map(row => {
+    return data.map((row) => {
       const filtered = {};
       for (const [key, val] of Object.entries(row)) {
         if (!EXCLUDE_COLS.has(key.toLowerCase())) {
@@ -181,12 +243,14 @@ function MainPage() {
     if (!csvData || !csvData.length) return [];
     const allKeys = Object.keys(csvData[0]);
     return allKeys.filter((k) => !EXCLUDE_COLS.has(k.toLowerCase()));
-  }, [csvData]);
+  }, [csvData, EXCLUDE_COLS]);
 
   // Статистика по выбранной колонке
   const targetStats = useMemo(() => {
     if (!targetColumn || !csvData) return null;
-    const vals = csvData.map((r) => r[targetColumn]).filter((v) => v !== "" && v != null);
+    const vals = csvData
+      .map((r) => r[targetColumn])
+      .filter((v) => v !== "" && v != null);
     const unique = new Set(vals).size;
     const isNumeric = vals.every((v) => typeof v === "number");
     return {
@@ -198,35 +262,77 @@ function MainPage() {
     };
   }, [targetColumn, csvData]);
 
-  const canRun = useMemo(() => !!csvData && targetSelected && !busy, [csvData, targetSelected, busy]);
+  /** Единое условие «можно запускать полный анализ» — сайдбар и будущие проверки опираются на это. */
+  const canRun = useMemo(
+    () => Boolean(csvData?.length) && targetSelected && !busy,
+    [csvData, targetSelected, busy],
+  );
 
   async function onRunAnalysis(params) {
     if (!csvData) return;
-    setBusy(true); setError(""); setAnalysisResult(null);
+    setBusy(true);
+    setError("");
+    setAnalysisResult(null);
     try {
-      const res = await runFullAnalysis(csvData, { ...params, target_col: targetColumn });
+      const res = await runFullAnalysis(csvData, {
+        ...params,
+        target_col: targetColumn,
+      });
       setAnalysisResult(res);
+
+      // Если в результате анализа есть данные с кластерами — добавляем их в sharedData
+      if (res.data_with_clusters && Array.isArray(res.data_with_clusters)) {
+        shared.updateData(res.data_with_clusters);
+        console.log(
+          "[MainPage] sharedData обновлён с колонкой кластеров:",
+          res.data_with_clusters[0]
+            ? Object.keys(res.data_with_clusters[0])
+            : [],
+        );
+      }
+      // Альтернативный вариант (если бэкенд возвращает predictions или labeled_data)
+      else if (res.labeled_data && Array.isArray(res.labeled_data)) {
+        shared.updateData(res.labeled_data);
+      } else if (res.predictions && Array.isArray(res.predictions)) {
+        // Если кластеры пришли только в predictions — можно мержить, но это сложнее
+        console.warn("[MainPage] Кластеры не найдены в основном результате");
+      }
+
       // Сохраняем в localStorage для Experiments.jsx
       localStorage.setItem("last_analysis_result", JSON.stringify(res));
-    } catch (e) { setError(String(e.message || e)); }
-    finally { setBusy(false); }
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function onCorrelation() {
     if (!file) return;
-    try { setBusy(true); setError(""); const res = await uploadForCorrelation(file); setCorrResult(res); }
-    catch (e) { setError(String(e.message || e)); }
-    finally { setBusy(false); }
+    try {
+      setBusy(true);
+      setError("");
+      const res = await uploadForCorrelation(file);
+      setCorrResult(res);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function onTrainAsync() {
     if (!csvData || !csvData.length) return;
-    setBusy(true); setError("");
+    setBusy(true);
+    setError("");
     try {
       const res = await trainAsyncJson(csvData);
       setTrainTaskId(res.task_id);
-    } catch (e) { setError(String(e.message || e)); }
-    finally { setBusy(false); }
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleSaveExperiment() {
@@ -238,7 +344,7 @@ function MainPage() {
         analysisResult.test_metrics || analysisResult.metrics || {},
         analysisResult.selected_features || [],
         saveDesc,
-        analysisResult.config || {}
+        analysisResult.config || {},
       );
       setSaveModalOpen(false);
       setSaveName("");
@@ -258,7 +364,9 @@ function MainPage() {
     shared.updateData(filtered);
     if (filtered && filtered.length > 0) {
       const headers = Object.keys(filtered[0]);
-      const previewRows = filtered.slice(0, 5).map(r => headers.map(h => String(r[h] ?? "")));
+      const previewRows = filtered
+        .slice(0, 5)
+        .map((r) => headers.map((h) => String(r[h] ?? "")));
       setCsvPreview({ headers, rows: previewRows, rowCount: filtered.length });
     } else {
       setCsvPreview({ headers: [], rows: [], rowCount: 0, riskPct: null });
@@ -270,12 +378,18 @@ function MainPage() {
     if (!file) return;
     setBusy(true);
     setMappingConfig(config);
+
     try {
       const group = sheetPreview?.detected_group || "numeric";
-      const res = await processExcel(file, sheetPreview?.sheet_name || "0", group, config);
+      const res = await processExcel(
+        file,
+        sheetPreview?.sheet_name || "0",
+        group,
+        config,
+      );
       // Сохраняем сырые данные и показываем DataEnrichment
       setRawExcelData(res.data);
-      // sheetPreview НЕ сбрасываем — он нужен для отображения категории в DataEnrichment
+      setSheetPreview(null);
     } catch (e) {
       setError("Ошибка обработки Excel: " + e.message);
     } finally {
@@ -313,22 +427,40 @@ function MainPage() {
   /** Загружает превью выбранного листа Excel */
   async function loadSheetPreview(fileObj, sheetName) {
     if (!fileObj || !sheetName) return;
-    setBusy(true); setError("");
+
+    setBusy(true);
+    setError("");
+    setRawExcelData(null);
+    setMappingConfig(null);
     try {
       console.log("=== loadSheetPreview ===");
       console.log("Выбранный лист:", sheetName);
+
       const preview = await getExcelPreview(fileObj, sheetName);
       console.log("Превью от сервера:", preview);
+      console.log(
+        "Все колонки:",
+        preview.columns?.map((c) => ({
+          name: c.name,
+          dtype: c.dtype,
+          isString: c.dtype === "object" || c.dtype === "string",
+        })),
+      );
       setSheetPreview(preview);
+      const isNumericOnly = preview.detected_group === "numeric";
+      if (isNumericOnly) {
+        // Для чисто числовых листов сразу обрабатываем без маппера
+        console.log("Числовой лист — пропускаем маппинг и сразу обрабатываем");
+        const group = preview.detected_group || "numeric";
+        const res = await processExcel(fileObj, sheetName, group, null);
+        setRawExcelData(res.data);
+        setSheetPreview(null); // Не показываем маппер
+      }
       setBusy(false);
-
-      // ВСЕ листы (и числовые тоже) теперь идут через процесс → DataEnrichment
-      const group = preview.detected_group || "numeric";
-      const res = await processExcel(fileObj, sheetName, group, null);
-      setRawExcelData(res.data);
     } catch (e) {
       setError("Ошибка превью: " + e.message);
       setBusy(false);
+      setSheetPreview(null);
     }
   }
 
@@ -346,17 +478,28 @@ function MainPage() {
   /** Обрабатывает загрузку CSV или Excel */
   async function onFileChange(e) {
     const next = e.target.files?.[0] || null;
-    setFile(next); setCorrResult(null); setAnalysisResult(null); setCsvData(null);
-    setSheetPreview(null); setMappingConfig(null); setRawExcelData(null);
-    setExcelSheets([]); setSelectedSheet("");
-    setTargetColumn(""); setTargetSelected(false);
-    if (!next) { setCsvPreview({ headers: [], rows: [], rowCount: 0, riskPct: null }); return; }
+    setFile(next);
+    setCorrResult(null);
+    setAnalysisResult(null);
+    setCsvData(null);
+    setSheetPreview(null);
+    setMappingConfig(null);
+    setRawExcelData(null);
+    setExcelSheets([]);
+    setSelectedSheet("");
+    setTargetColumn("");
+    setTargetSelected(false);
+    if (!next) {
+      setCsvPreview({ headers: [], rows: [], rowCount: 0, riskPct: null });
+      return;
+    }
 
     const isExcel = next.name.endsWith(".xlsx") || next.name.endsWith(".xls");
 
     try {
       if (isExcel) {
         // --- Excel: читаем имена листов локально ---
+        const XLSX = await import("xlsx");
         const buf = await next.arrayBuffer();
         const wb = XLSX.read(buf, { type: "array" });
         const sheetNames = wb.SheetNames;
@@ -370,7 +513,6 @@ function MainPage() {
           // Много листов — ждём выбора пользователя
           setCsvPreview({ headers: [], rows: [], rowCount: 0, riskPct: null });
         }
-
       } else {
         // --- CSV (единый поток через DataEnrichment, как Excel) ---
         setSheetPreview(null);
@@ -381,9 +523,14 @@ function MainPage() {
         const riskIdx = headers.indexOf("risk_flag");
         let riskPct = null;
         if (riskIdx >= 0) {
-          const vals = lines.slice(1).map((l) => Number((l.split(",")[riskIdx] || "").trim()));
+          const vals = lines
+            .slice(1)
+            .map((l) => Number((l.split(",")[riskIdx] || "").trim()));
           const valid = vals.filter((v) => Number.isFinite(v));
-          if (valid.length) { const risky = valid.filter((v) => v === 1).length; riskPct = (risky / valid.length) * 100; }
+          if (valid.length) {
+            const risky = valid.filter((v) => v === 1).length;
+            riskPct = (risky / valid.length) * 100;
+          }
         }
 
         const allRows = lines.slice(1).map((l) => {
@@ -391,7 +538,7 @@ function MainPage() {
           const obj = {};
           headers.forEach((h, i) => {
             const v = cells[i] ?? "";
-            obj[h] = v === "" ? "" : (isNaN(v) ? v : Number(v));
+            obj[h] = v === "" ? "" : isNaN(v) ? v : Number(v);
           });
           return obj;
         });
@@ -401,7 +548,12 @@ function MainPage() {
         setRawExcelData(filtered);
 
         // Превью из первых 5 строк (без фильтрации служебных для совместимости)
-        setCsvPreview({ headers, rows: lines.slice(1, 6).map((l) => l.split(",").map(c => c.trim())), rowCount: Math.max(lines.length - 1, 0), riskPct });
+        setCsvPreview({
+          headers,
+          rows: lines.slice(1, 6).map((l) => l.split(",").map((c) => c.trim())),
+          rowCount: Math.max(lines.length - 1, 0),
+          riskPct,
+        });
       }
     } catch (err) {
       console.error(err);
@@ -424,14 +576,27 @@ function MainPage() {
     return (
       <div className="table-wrap">
         <table className="matrix">
-          <thead><tr><th>feature</th>{cols.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+          <thead>
+            <tr>
+              <th>feature</th>
+              {cols.map((c) => (
+                <th key={c}>{c}</th>
+              ))}
+            </tr>
+          </thead>
           <tbody>
             {cols.map((r) => (
               <tr key={r}>
-                <td><b>{r}</b></td>
+                <td>
+                  <b>{r}</b>
+                </td>
                 {cols.map((c) => {
                   const v = Number(matrix[r]?.[c] ?? 0);
-                  return <td key={`${r}_${c}`} className={getCellClass(v)}>{v.toFixed(2)}</td>;
+                  return (
+                    <td key={`${r}_${c}`} className={getCellClass(v)}>
+                      {v.toFixed(2)}
+                    </td>
+                  );
                 })}
               </tr>
             ))}
@@ -443,22 +608,59 @@ function MainPage() {
 
   return (
     <div className="analysis-layout">
-      <AnalysisSidebar onRun={onRunAnalysis} busy={busy} disabled={!targetSelected} />
+      <AnalysisSidebar onRun={onRunAnalysis} busy={busy} canRun={canRun} />
 
       <div className="analysis-main">
         <div className="card">
           <h2>1) Загрузка данных</h2>
           <input type="file" accept=".csv,.xlsx,.xls" onChange={onFileChange} />
           <p>Файл: {file?.name || "не выбран"}</p>
+          {mappingConfig && (
+            <p className="muted" style={{ marginTop: 4 }}>
+              Маппинг Excel: лист «{mappingConfig.sheet_name ?? "—"}», колонок с
+              правилами:{" "}
+              <b>{Object.keys(mappingConfig.columns || {}).length}</b>
+              {mappingConfig.detected_group ? (
+                <>
+                  {" "}
+                  · тип листа: <b>{mappingConfig.detected_group}</b>
+                </>
+              ) : null}
+            </p>
+          )}
 
           {/* --- ВЫБОР ЛИСТА EXCEL --- */}
           {excelSheets.length > 1 && (
-            <div className="sheet-selector" style={{ marginTop: 12, padding: 12, background: "var(--bg-secondary)", borderRadius: 8 }}>
-              <label><b>Файл содержит {excelSheets.length} листов. Выберите:</b>
-                <select value={selectedSheet} onChange={(e) => onSheetSelect(e.target.value)}
-                  style={{ width: "100%", marginTop: 6, padding: 8, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }}>
+            <div
+              className="sheet-selector"
+              style={{
+                marginTop: 12,
+                padding: 12,
+                background: "var(--bg-secondary)",
+                borderRadius: 8,
+              }}
+            >
+              <label>
+                <b>Файл содержит {excelSheets.length} листов. Выберите:</b>
+                <select
+                  value={selectedSheet}
+                  onChange={(e) => onSheetSelect(e.target.value)}
+                  style={{
+                    width: "100%",
+                    marginTop: 6,
+                    padding: 8,
+                    borderRadius: 6,
+                    border: "1px solid var(--border)",
+                    background: "var(--bg)",
+                    color: "var(--text)",
+                  }}
+                >
                   <option value="">— Выберите лист —</option>
-                  {excelSheets.map((s) => <option key={s} value={s}>{s}</option>)}
+                  {excelSheets.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
                 </select>
               </label>
             </div>
@@ -492,58 +694,120 @@ function MainPage() {
 
           {csvPreview.rowCount > 0 && (
             <>
-              <p>Строк: <b>{csvPreview.rowCount}</b>
-                {csvPreview.riskPct != null && <> | Доля risk_flag=1: <b>{csvPreview.riskPct.toFixed(1)}%</b></>}
+              <p>
+                Строк: <b>{csvPreview.rowCount}</b>
+                {csvPreview.riskPct != null && (
+                  <>
+                    {" "}
+                    | Доля risk_flag=1: <b>{csvPreview.riskPct.toFixed(1)}%</b>
+                  </>
+                )}
               </p>
               <div className="table-wrap">
                 <table>
-                  <thead><tr>{csvPreview.headers.map((h) => <th key={h}>{h}</th>)}</tr></thead>
-                  <tbody>{csvPreview.rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={`${i}_${j}`}>{c}</td>)}</tr>)}</tbody>
+                  <thead>
+                    <tr>
+                      {csvPreview.headers.map((h) => (
+                        <th key={h}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {csvPreview.rows.map((r, i) => (
+                      <tr key={i}>
+                        {r.map((c, j) => (
+                          <td key={`${i}_${j}`}>{c}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
                 </table>
               </div>
             </>
           )}
         </div>
 
-        {/* === ВЫБОР ЦЕЛЕВОЙ ПЕРЕМЕННОЙ (как в Streamlit) === */}
-        {csvData && csvData.length > 0 && !targetSelected && targetCandidates.length > 0 && !sheetPreview && !rawExcelData && (
-          <div className="card">
-            <h2>🎯 Выбор целевой переменной</h2>
-            <p>Всего записей: <b>{csvData.length}</b> | Колонки: <b>{targetCandidates.length}</b></p>
+        {/* === ВЫБОР ЦЕЛЕВОЙ ПЕРЕМЕННОЙ === */}
+        {csvData &&
+          csvData.length > 0 &&
+          !targetSelected &&
+          targetCandidates.length > 0 &&
+          !sheetPreview &&
+          !rawExcelData && (
+            <div className="card">
+              <h2>🎯 Выбор целевой переменной</h2>
+              <p>
+                Всего записей: <b>{csvData.length}</b> | Колонки:{" "}
+                <b>{targetCandidates.length}</b>
+              </p>
 
-            <label><b>Колонка для предсказания:</b>
-              <select value={targetColumn} onChange={(e) => setTargetColumn(e.target.value)} style={{ width: "100%", padding: 8, marginTop: 4, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }}>
-                <option value="">— Выберите колонку —</option>
-                {targetCandidates.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </label>
+              <label>
+                <b>Колонка для предсказания:</b>
+                <select
+                  value={targetColumn}
+                  onChange={(e) => setTargetColumn(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: 8,
+                    marginTop: 4,
+                    borderRadius: 6,
+                    border: "1px solid var(--border)",
+                    background: "var(--bg)",
+                    color: "var(--text)",
+                  }}
+                >
+                  <option value="">— Выберите колонку —</option>
+                  {targetCandidates.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-            {targetStats && (
-              <div className="muted" style={{ fontSize: 13, marginTop: 8 }}>
-                <p style={{ margin: "4px 0" }}>Тип: <b>{targetStats.type}</b> | Уникальных: <b>{targetStats.unique}</b>
-                  {targetStats.min != null && <> | Диапазон: {targetStats.min} — {targetStats.max}</>}
-                </p>
-                {targetStats.needsBinarize && (
-                  <p className="muted" style={{ color: "var(--primary)" }}>
-                    ℹ️ Колонка содержит более 2 значений — будет преобразована в бинарную (порог = медиана)
+              {targetStats && (
+                <div className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+                  <p style={{ margin: "4px 0" }}>
+                    Тип: <b>{targetStats.type}</b> | Уникальных:{" "}
+                    <b>{targetStats.unique}</b>
+                    {targetStats.min != null && (
+                      <>
+                        {" "}
+                        | Диапазон: {targetStats.min} — {targetStats.max}
+                      </>
+                    )}
                   </p>
-                )}
-              </div>
-            )}
+                  {targetStats.needsBinarize && (
+                    <p className="muted" style={{ color: "var(--primary)" }}>
+                      ℹ️ Колонка содержит более 2 значений — будет преобразована
+                      в бинарную (порог = медиана)
+                    </p>
+                  )}
+                </div>
+              )}
 
-            <div className="row" style={{ marginTop: 12 }}>
-              <button className="primary" disabled={!targetColumn} onClick={() => setTargetSelected(true)}>
-                ✅ Подтвердить выбор цели
-              </button>
-              <button onClick={() => {
-                setCsvData(null); setFile(null); setTargetColumn("");
-                setTargetSelected(false); setSheetPreview(null);
-              }}>
-                🔄 Сбросить данные
-              </button>
+              <div className="row" style={{ marginTop: 12 }}>
+                <button
+                  className="primary"
+                  disabled={!targetColumn}
+                  onClick={() => setTargetSelected(true)}
+                >
+                  ✅ Подтвердить выбор цели
+                </button>
+                <button
+                  onClick={() => {
+                    setCsvData(null);
+                    setFile(null);
+                    setTargetColumn("");
+                    setTargetSelected(false);
+                    setSheetPreview(null);
+                  }}
+                >
+                  🔄 Сбросить данные
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
         {error && <p className="error">{error}</p>}
 
@@ -551,40 +815,96 @@ function MainPage() {
         {analysisResult && (
           <>
             <AnalysisResults result={analysisResult} />
-            <div className="card" style={{ marginTop: 16, background: "var(--bg-secondary)" }}>
-              <h3>💾 Сохранить этот анализ</h3>
-              <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
-                <label style={{ flex: 1 }}>
-                  Название:
-                  <input
-                    type="text"
-                    value={saveName}
-                    onChange={e => setSaveName(e.target.value)}
-                    placeholder="Например: Вильямс (SMOTE выкл)"
-                    style={{ width: "100%", marginTop: 4, padding: 8, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }}
-                  />
-                </label>
-                <label style={{ flex: 2 }}>
-                  Описание:
-                  <input
-                    type="text"
-                    value={saveDesc}
-                    onChange={e => setSaveDesc(e.target.value)}
-                    placeholder="Комментарий..."
-                    style={{ width: "100%", marginTop: 4, padding: 8, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }}
-                  />
-                </label>
+            <div className="card" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => setSaveModalOpen(true)}
+              >
+                💾 Сохранить как эксперимент…
+              </button>
+            </div>
+          </>
+        )}
+
+        {saveModalOpen && (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onClick={() => {
+              if (!saving) setSaveModalOpen(false);
+            }}
+          >
+            <div
+              className="modal-panel"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="save-experiment-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 id="save-experiment-title">💾 Сохранить анализ</h3>
+              <p className="muted" style={{ marginTop: 0 }}>
+                Имя и описание попадут в каталог экспериментов (вкладка
+                «Эксперименты»).
+              </p>
+              <label style={{ display: "block", marginTop: 12 }}>
+                Название:
+                <input
+                  type="text"
+                  value={saveName}
+                  onChange={(e) => setSaveName(e.target.value)}
+                  placeholder="Например: Вильямс (SMOTE выкл)"
+                  style={{
+                    width: "100%",
+                    marginTop: 4,
+                    padding: 8,
+                    borderRadius: 6,
+                    border: "1px solid var(--border)",
+                    background: "var(--bg)",
+                    color: "var(--text)",
+                  }}
+                />
+              </label>
+              <label style={{ display: "block", marginTop: 12 }}>
+                Описание:
+                <input
+                  type="text"
+                  value={saveDesc}
+                  onChange={(e) => setSaveDesc(e.target.value)}
+                  placeholder="Комментарий…"
+                  style={{
+                    width: "100%",
+                    marginTop: 4,
+                    padding: 8,
+                    borderRadius: 6,
+                    border: "1px solid var(--border)",
+                    background: "var(--bg)",
+                    color: "var(--text)",
+                  }}
+                />
+              </label>
+              <div
+                className="row"
+                style={{ marginTop: 16, justifyContent: "flex-end", gap: 8 }}
+              >
                 <button
+                  type="button"
+                  onClick={() => setSaveModalOpen(false)}
+                  disabled={saving}
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
                   className="primary"
                   onClick={handleSaveExperiment}
                   disabled={!saveName.trim() || saving}
-                  style={{ height: 40 }}
                 >
-                  {saving ? "⏳..." : "Сохранить"}
+                  {saving ? "⏳…" : "Сохранить"}
                 </button>
               </div>
             </div>
-          </>
+          </div>
         )}
 
         {/* Быстрые инструменты (показываются только если анализ ещё не запущен) */}
@@ -592,25 +912,43 @@ function MainPage() {
           <>
             <div className="card">
               <h2>2) Корреляционный анализ (быстрый)</h2>
-              <button onClick={onCorrelation} disabled={!file || busy}>Запустить корреляцию</button>
+              <button onClick={onCorrelation} disabled={!file || busy}>
+                Запустить корреляцию
+              </button>
               {corrResult ? (
                 <>
-                  <p>Размер: <b>{corrResult.n_rows}</b> строк × <b>{corrResult.n_columns}</b> колонок</p>
+                  <p>
+                    Размер: <b>{corrResult.n_rows}</b> строк ×{" "}
+                    <b>{corrResult.n_columns}</b> колонок
+                  </p>
                   {renderCorrelationTable()}
                   {/* Plotly Heatmap */}
                   {corrResult.heatmap && (
                     <div className="plots-grid" style={{ marginTop: 12 }}>
-                      <Plot data={corrResult.heatmap.data} layout={corrResult.heatmap.layout} config={{ responsive: true }} style={{ width: "100%" }} />
+                      <Plot
+                        data={corrResult.heatmap.data}
+                        layout={corrResult.heatmap.layout}
+                        config={{ responsive: true }}
+                        style={{ width: "100%" }}
+                      />
                     </div>
                   )}
                 </>
-              ) : <p className="muted">После запуска появится корреляционная матрица.</p>}
+              ) : (
+                <p className="muted">
+                  После запуска появится корреляционная матрица.
+                </p>
+              )}
             </div>
 
             <div className="card">
               <h2>3) Асинхронные ML-задачи (Celery)</h2>
-              <p className="muted">Обучение в фоне (требует Celery worker). Не блокирует интерфейс.</p>
-              <button onClick={onTrainAsync} disabled={!csvData || busy}>Обучение модели (Async)</button>
+              <p className="muted">
+                Обучение в фоне (требует Celery worker). Не блокирует интерфейс.
+              </p>
+              <button onClick={onTrainAsync} disabled={!csvData || busy}>
+                Обучение модели (Async)
+              </button>
             </div>
 
             <PollingTask taskId={trainTaskId} title="Обучение модели" />
@@ -625,7 +963,9 @@ export default function App() {
   const [health, setHealth] = useState("checking");
 
   useEffect(() => {
-    healthcheck().then(() => setHealth("ok")).catch(() => setHealth("down"));
+    healthcheck()
+      .then(() => setHealth("ok"))
+      .catch(() => setHealth("down"));
   }, []);
 
   return (
@@ -634,7 +974,16 @@ export default function App() {
       <main className="container">
         <h1>АРМ исследователя — Мониторинг академических рисков</h1>
         <p className="muted">React MFE · FastAPI API · ml_core</p>
-        <p>API: <span className={health === "ok" ? "ok" : health === "down" ? "error" : ""}>{health}</span></p>
+        <p>
+          API:{" "}
+          <span
+            className={
+              health === "ok" ? "ok" : health === "down" ? "error" : ""
+            }
+          >
+            {health}
+          </span>
+        </p>
         <Tabs />
         <Routes>
           <Route path="/" element={<MainPage />} />

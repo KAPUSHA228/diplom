@@ -6,14 +6,14 @@ import { useSharedData } from "../hooks/useSharedData";
 
 export default function Crosstab() {
   const { data: sharedData, columns: sharedCols, hasShared } = useSharedData();
-  const [file, setFile] = useState(null);
   const [fileData, setFileData] = useState(null);
   const [rowVar, setRowVar] = useState("");
   const [colVar, setColVar] = useState("");
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-
+  const [nBins, setNBins] = useState(4);
+  const [binMethod, setBinMethod] = useState("cut");
   const activeData = fileData || sharedData;
   const activeCols = fileData ? Object.keys(fileData[0] || {}) : sharedCols;
 
@@ -27,12 +27,14 @@ export default function Crosstab() {
   async function onFileChange(e) {
     const f = e.target.files?.[0];
     if (!f) return;
-    setFile(f); setResult(null);
+    setResult(null);
     try {
       const parsed = await parseFile(f);
       setFileData(parsed?.allData || null);
       initData(parsed?.allData);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   // Инициализация колонок при загрузке shared data
@@ -40,14 +42,61 @@ export default function Crosstab() {
     if (hasShared && !fileData && !rowVar) initData(sharedData);
   });
 
+  // Функция скачивания кросс-таблицы
+  const downloadCrosstab = (result) => {
+    if (!result?.table) return;
+
+    const rowNames = Object.keys(result.table);
+    const colNames =
+      rowNames.length > 0 ? Object.keys(result.table[rowNames[0]]) : [];
+
+    // Формируем заголовок
+    let csvContent = "Строки \\ Столбцы," + colNames.join(",") + "\n";
+
+    // Формируем строки
+    rowNames.forEach((row) => {
+      const values = colNames.map((col) => {
+        const val = result.table[row]?.[col];
+        return typeof val === "number" ? val.toFixed(4) : (val ?? "");
+      });
+      csvContent += `"${row}",` + values.join(",") + "\n";
+    });
+
+    // Скачивание
+    const encodedUri = encodeURI("data:text/csv;charset=utf-8," + csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `crosstab_${rowVar}_vs_${colVar}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
   async function onRun() {
     if (!activeData || !rowVar || !colVar) return;
-    setBusy(true); setError("");
+    setBusy(true);
+    setError("");
     try {
-      const res = await buildCrosstab(activeData, rowVar, colVar);
+      console.log("Отправляем в кросс-таблицу:", {
+        rowVar,
+        colVar,
+        nBins,
+        binMethod,
+      });
+      const res = await buildCrosstab(
+        activeData,
+        rowVar,
+        colVar,
+        null,
+        "count",
+        nBins,
+        binMethod,
+      );
       setResult(res);
-    } catch (err) { setError("Ошибка: " + err.message); }
-    finally { setBusy(false); }
+    } catch (err) {
+      setError("Ошибка: " + err.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -56,8 +105,17 @@ export default function Crosstab() {
 
       <div style={{ marginBottom: 12 }}>
         {hasShared && !fileData && (
-          <div className="ok" style={{ padding: 8, borderRadius: 6, background: "var(--bg-secondary)", marginBottom: 8 }}>
-            ✅ Используются данные с главной: <b>{sharedData.length} строк</b>, {activeCols.length} колонок
+          <div
+            className="ok"
+            style={{
+              padding: 8,
+              borderRadius: 6,
+              background: "var(--bg-secondary)",
+              marginBottom: 8,
+            }}
+          >
+            ✅ Используются данные с главной: <b>{sharedData.length} строк</b>,{" "}
+            {activeCols.length} колонок
           </div>
         )}
         <input type="file" accept=".csv,.xlsx,.xls" onChange={onFileChange} />
@@ -67,13 +125,47 @@ export default function Crosstab() {
         <div className="row" style={{ marginTop: 8 }}>
           <label>Строки: </label>
           <select value={rowVar} onChange={(e) => setRowVar(e.target.value)}>
-            {activeCols.map((h) => <option key={h} value={h}>{h}</option>)}
+            {activeCols.map((h) => (
+              <option key={h} value={h}>
+                {h}
+              </option>
+            ))}
           </select>
           <label>Столбцы: </label>
           <select value={colVar} onChange={(e) => setColVar(e.target.value)}>
-            {activeCols.map((h) => <option key={h} value={h}>{h}</option>)}
+            {activeCols.map((h) => (
+              <option key={h} value={h}>
+                {h}
+              </option>
+            ))}
           </select>
-          <button onClick={onRun} disabled={busy}>Построить</button>
+          <label style={{ marginLeft: "auto" }}>
+            Кол-во интервалов:
+            <select
+              value={nBins}
+              onChange={(e) => setNBins(Number(e.target.value))}
+              style={{ marginLeft: 8, padding: "4px 8px", borderRadius: 6 }}
+            >
+              {[2, 3, 4, 5, 6, 7, 8, 10].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div style={{ marginTop: 12 }}>
+            <label>Метод разбиения: </label>
+            <select
+              value={binMethod}
+              onChange={(e) => setBinMethod(e.target.value)}
+            >
+              <option value="cut">Равные интервалы (cut)</option>
+              <option value="qcut">Равное количество студентов (qcut)</option>
+            </select>
+          </div>
+          <button onClick={onRun} disabled={busy}>
+            Построить
+          </button>
         </div>
       )}
 
@@ -82,26 +174,60 @@ export default function Crosstab() {
       {result?.table && (
         <>
           <div className="table-wrap" style={{ marginTop: 12 }}>
-            <h3>Таблица сопряжённости</h3>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 8,
+              }}
+            >
+              <h3>Таблица сопряжённости</h3>
+              <button
+                onClick={() => downloadCrosstab(result)}
+                style={{
+                  padding: "6px 12px",
+                  fontSize: "14px",
+                  background: "var(--primary)",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                }}
+              >
+                ⬇️ Скачать CSV
+              </button>
+            </div>
+
             {(() => {
-              // result.table = { "RowName": { "ColName": value, ... }, ... }
               const rowNames = Object.keys(result.table);
-              const colNames = rowNames.length > 0 ? Object.keys(result.table[rowNames[0]]) : [];
+              const colNames =
+                rowNames.length > 0
+                  ? Object.keys(result.table[rowNames[0]])
+                  : [];
 
               return (
                 <table>
                   <thead>
                     <tr>
-                      <th>Строки \ Столцы</th>
-                      {colNames.map((c) => <th key={c}>{c}</th>)}
+                      <th>Строки \ Столбцы</th>
+                      {colNames.map((c) => (
+                        <th key={c}>{c}</th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
                     {rowNames.map((row) => (
                       <tr key={row}>
-                        <td><b>{row}</b></td>
+                        <td>
+                          <b>{row}</b>
+                        </td>
                         {colNames.map((col) => (
-                          <td key={col}>{typeof result.table[row]?.[col] === "number" ? result.table[row][col].toFixed(2) : result.table[row]?.[col] ?? "—"}</td>
+                          <td key={col}>
+                            {typeof result.table[row]?.[col] === "number"
+                              ? result.table[row][col].toFixed(2)
+                              : (result.table[row]?.[col] ?? "—")}
+                          </td>
                         ))}
                       </tr>
                     ))}
@@ -114,11 +240,14 @@ export default function Crosstab() {
           {/* Heatmap & Stacked Bar */}
           {(() => {
             const rowNames = Object.keys(result.table);
-            const colNames = rowNames.length > 0 ? Object.keys(result.table[rowNames[0]]) : [];
-            const cleanZ = rowNames.map(r => colNames.map(c => {
-              const v = result.table[r]?.[c];
-              return Number(v) || 0;
-            }));
+            const colNames =
+              rowNames.length > 0 ? Object.keys(result.table[rowNames[0]]) : [];
+            const cleanZ = rowNames.map((r) =>
+              colNames.map((c) => {
+                const v = result.table[r]?.[c];
+                return Number(v) || 0;
+              }),
+            );
             const maxVal = Math.max(...cleanZ.flat(), 1);
 
             return (
@@ -126,18 +255,27 @@ export default function Crosstab() {
                 <div style={{ marginTop: 16 }}>
                   <h3>Heatmap</h3>
                   <Plot
-                    data={[{
-                      z: cleanZ,
-                      type: "heatmap",
-                      colorscale: "Viridis",
-                      zmin: 0,
-                      zmax: maxVal,
-                    }]}
+                    data={[
+                      {
+                        z: cleanZ,
+                        type: "heatmap",
+                        colorscale: "Viridis",
+                        zmin: 0,
+                        zmax: maxVal,
+                      },
+                    ]}
                     layout={{
                       margin: { l: 100, r: 20, t: 30, b: 100 },
                       height: Math.max(500, rowNames.length * 25),
-                      xaxis: { tickvals: colNames.map((_, i) => i), ticktext: colNames, tickangle: -45 },
-                      yaxis: { tickvals: rowNames.map((_, i) => i), ticktext: rowNames }
+                      xaxis: {
+                        tickvals: colNames.map((_, i) => i),
+                        ticktext: colNames,
+                        tickangle: -45,
+                      },
+                      yaxis: {
+                        tickvals: rowNames.map((_, i) => i),
+                        ticktext: rowNames,
+                      },
                     }}
                     config={{ responsive: true, displayModeBar: false }}
                     style={{ width: "100%" }}
@@ -151,7 +289,7 @@ export default function Crosstab() {
                       name: col,
                       type: "bar",
                       x: rowNames.map((_, ri) => ri),
-                      y: cleanZ.map(row => row[ci] || 0),
+                      y: cleanZ.map((row) => row[ci] || 0),
                     }))}
                     layout={{
                       barmode: "stack",
@@ -159,7 +297,11 @@ export default function Crosstab() {
                       height: 350,
                       showlegend: true,
                       legend: { orientation: "h", y: -0.3 },
-                      xaxis: { tickvals: rowNames.map((_, i) => i), ticktext: rowNames, tickangle: -45 },
+                      xaxis: {
+                        tickvals: rowNames.map((_, i) => i),
+                        ticktext: rowNames,
+                        tickangle: -45,
+                      },
                     }}
                     config={{ responsive: true, displayModeBar: false }}
                     style={{ width: "100%" }}
@@ -172,7 +314,10 @@ export default function Crosstab() {
       )}
 
       {result?.chi2_test && (
-        <p style={{ marginTop: 12 }}>χ² тест: p-value = <b>{result.chi2_test.p_value?.toFixed(4)}</b> {result.chi2_test.significant ? "✅ Значимо" : "❌ Не значимо"}</p>
+        <p style={{ marginTop: 12 }}>
+          χ² тест: p-value = <b>{result.chi2_test.p_value?.toFixed(4)}</b>{" "}
+          {result.chi2_test.significant ? "✅ Значимо" : "❌ Не значимо"}
+        </p>
       )}
     </div>
   );

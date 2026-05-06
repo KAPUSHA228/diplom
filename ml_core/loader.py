@@ -213,7 +213,7 @@ def get_sheet_preview(file_path: str, sheet_name: str) -> dict:
             text_cols = df.select_dtypes(include=["object"]).columns
             if text_cols.any():
                 sample = df[text_cols].dropna().head(5).to_string()
-                if any(sep in sample for sep in [";", ","]):
+                if any(sep in sample for sep in [";", "|"]):
                     group = "multiple_choice"
                 else:
                     group = "single_choice"
@@ -516,6 +516,49 @@ def process_multiple_choice_column(df: pd.DataFrame, col: str, prefix: str = "",
     # Удаляем исходную колонку
     df = df.drop(columns=[col])
 
+    return df
+
+
+def process_multiple_choice_ordinal_column(df: pd.DataFrame, col: str, separator: str = ";") -> pd.DataFrame:
+    """
+    Для multiple-choice строит один ordinal-скор вместо one-hot.
+    Скор = средний ранг выбранных вариантов (ранги по алфавиту вариантов).
+    """
+    if col not in df.columns:
+        return df
+
+    df = df.copy()
+    separators = [separator, ", ", "; ", ",", ";", " | ", "|"]
+
+    def split_choices(text):
+        if pd.isna(text):
+            return []
+        text = str(text).strip()
+        for sep in separators:
+            if sep in text:
+                return [x.strip() for x in text.split(sep) if x.strip()]
+        return [text] if text else []
+
+    all_choices = set()
+    for val in df[col].dropna():
+        all_choices.update(split_choices(val))
+    all_choices = sorted(all_choices)
+    if not all_choices:
+        df[col] = 0
+        return df
+
+    ranks = {choice: idx + 1 for idx, choice in enumerate(all_choices)}
+
+    def score_row(value):
+        parts = split_choices(value)
+        if not parts:
+            return 0
+        vals = [ranks[p] for p in parts if p in ranks]
+        if not vals:
+            return 0
+        return float(sum(vals)) / float(len(vals))
+
+    df[col] = df[col].apply(score_row)
     return df
 
 
