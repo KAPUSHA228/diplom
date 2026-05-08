@@ -8,7 +8,7 @@ import pandas as pd
 from ml_core.error_handler import logger
 
 SHEET_TYPE_PATTERNS = {
-    "category1_numeric": {  # Вильямс, Шварц, Триандис, соц14
+    "category1_numeric": {
         "keywords": [
             "Любознательность",
             "Воображение",
@@ -426,6 +426,15 @@ def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None,
     ]
     if service_cols:
         df = df.drop(columns=service_cols)
+    # === 4. Гарантируем наличие идентификатора студента ===
+    if "student_id" not in df.columns:
+        # Если совсем нет — создаём синтетический
+        df["student_id"] = [f"student_{i:06d}" for i in range(len(df))]
+
+    # Перемещаем student_id в начало для удобства
+    if "student_id" in df.columns:
+        cols = ["student_id"] + [c for c in df.columns if c != "student_id"]
+        df = df[cols]
 
     df = df.loc[:, ~df.columns.duplicated()]
 

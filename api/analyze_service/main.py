@@ -17,11 +17,7 @@ import plotly.graph_objects as go
 
 from ml_core.crosstab import create_crosstab, simple_crosstab
 from ml_core.features import create_feature_combinations
-from ml_core.timeseries import (
-    analyze_student_trajectory,
-    detect_negative_dynamics,
-    forecast_grades,
-)
+from ml_core.timeseries import get_trajectory, find_negative_dynamics, forecast_student
 from ml_core.drift_detector import DataDriftDetector
 from .schemas import (
     FeatureCombinationRequest,
@@ -216,11 +212,10 @@ async def student_trajectory(request: TrajectoryRequest):
     """Анализ траектории конкретного студента."""
     try:
         df = pd.DataFrame(request.df)
-        result = analyze_student_trajectory(
-            df, request.student_id, time_col=request.time_col, value_col=request.value_col
-        )
+        result = get_trajectory(df, request.student_id, value_col=request.value_col, time_col=request.time_col)
 
         student_data = df[df["student_id"] == request.student_id] if "student_id" in df.columns else df
+
         fig = px.line(
             student_data,
             x=request.time_col,
@@ -228,6 +223,7 @@ async def student_trajectory(request: TrajectoryRequest):
             title=f"Траектория: студент {request.student_id}",
             markers=True,
         )
+
         fig.add_trace(
             go.Scatter(
                 x=student_data[request.time_col],
@@ -239,49 +235,42 @@ async def student_trajectory(request: TrajectoryRequest):
         )
 
         return {
+            "student_id": request.student_id,
             "trend": result.get("trend"),
+            "r2": result.get("r2"),
             "status": result.get("status"),
             "first_value": safe_json_serializable(result.get("first_value")),
             "last_value": safe_json_serializable(result.get("last_value")),
-            "chart": safe_json_serializable(fig.to_plotly_json()),
+            "n_points": result.get("n_points"),
+            "chart": safe_json_serializable(result.get("figure").to_plotly_json()) if result.get("figure") else None,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/timeseries/negative_dynamics")
-async def find_negative_dynamics(request: TrajectoryRequest):
+async def negative_dynamics(request: TrajectoryRequest):
     """Поиск студентов с отрицательной динамикой."""
     try:
         df = pd.DataFrame(request.df)
-        result = detect_negative_dynamics(
-            df, student_id_col="student_id", time_col=request.time_col, value_col=request.value_col
-        )
-        return {
-            "n_students_analyzed": safe_json_serializable(result.get("n_students_analyzed", 0)),
-            "at_risk_count": len(result.get("at_risk_students", [])),
-            "risk_percentage": safe_json_serializable(result.get("risk_percentage", 0)),
-            "at_risk_students": safe_json_serializable(
-                result.get("at_risk_students", []).to_dict("records")
-                if isinstance(result.get("at_risk_students"), pd.DataFrame)
-                else result.get("at_risk_students", [])
-            ),
-        }
+        result = find_negative_dynamics(df, value_col=request.value_col, time_col=request.time_col)
+        return result
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/timeseries/forecast")
-async def forecast_student(request: ForecastRequest):
+async def forecast_student_endpoint(request: ForecastRequest):
     """Прогноз оценок студента на будущие семестры."""
     try:
         df = pd.DataFrame(request.df)
-        result = forecast_grades(
+        result = forecast_student(
             df,
             request.student_id,
-            time_col=request.time_col,
             value_col=request.value_col,
-            future_semesters=request.future_semesters,
+            time_col=request.time_col,
+            periods=request.future_semesters,
         )
 
         student_data = df[df["student_id"] == request.student_id] if "student_id" in df.columns else df
@@ -307,9 +296,11 @@ async def forecast_student(request: ForecastRequest):
             )
 
         return {
-            "future_semesters": safe_json_serializable(result.get("future_semesters", [])),
-            "predictions": safe_json_serializable(result.get("predictions", [])),
-            "chart": safe_json_serializable(fig.to_plotly_json()),
+            "student_id": request.student_id,
+            "future_periods": result.get("future_periods"),
+            "predictions": result.get("predictions"),
+            "trend": result.get("trend"),
+            # chart можно построить на фронте или здесь
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

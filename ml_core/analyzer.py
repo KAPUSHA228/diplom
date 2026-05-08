@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Dict, Any
 import pandas as pd
 from .config import config
 from .features import add_composite_features, build_composite_score, get_base_features, preprocess_data_for_smote
@@ -7,7 +7,7 @@ from .models import ModelTrainer
 from .evaluation import generate_shap_explanations, plot_confusion_matrix, plot_roc_curves, plot_feature_importance
 from .error_handler import safe_execute, logger
 from .schemas import AnalysisRequest, AnalysisResult
-from .timeseries import detect_negative_dynamics, analyze_student_trajectory, forecast_grades
+from .timeseries import TimeSeriesAnalyzer
 from .text_processor import extract_text_features
 from sklearn.model_selection import train_test_split
 import numpy as np
@@ -285,46 +285,108 @@ class ResearchAnalyzer:
         """
         return build_composite_score(df, feature_weights, score_name)
 
-    def analyze_student_trajectory(self, df: pd.DataFrame, student_id, value_col: str = "avg_grade"):
+    def analyze_student(
+        self, student_id: str, value_col: str = "avg_grade", time_col: str = "semester", min_points: int = 3
+    ) -> Dict[str, Any]:
         """
-        Анализирует траекторию студента: тренд, статус, график.
+        Полный анализ траектории одного студента.
 
         Args:
-            df: DataFrame с данными по семестрам
             student_id: идентификатор студента
-            value_col: колонка показателя
+            value_col: колонка с анализируемым показателем (например, 'avg_grade')
+            time_col: колонка с временной осью (например, 'semester')
+            min_points: минимальное количество точек для анализа
 
         Returns:
-            dict: {'trend', 'status', 'figure', ...}
+            dict: {
+                'student_id': str,
+                'n_points': int,
+                'trend': float,
+                'r2': float,
+                'status': str ('improving'|'stable'|'declining'),
+                'first_value': float,
+                'last_value': float,
+                'figure': plotly.graph_objects.Figure,
+                'values': list,
+                'times': list
+            }
         """
-        return analyze_student_trajectory(df, student_id, value_col=value_col)
+        try:
+            analyzer = TimeSeriesAnalyzer(self.df, student_id_col="student_id")
+            return analyzer.analyze_student(
+                student_id=student_id, value_col=value_col, time_col=time_col, min_points=min_points
+            )
+        except Exception as e:
+            logger.error(f"Ошибка анализа траектории студента {student_id}: {e}")
+            return {"status": "error", "message": str(e)}
 
-    def detect_negative_dynamics(self, df: pd.DataFrame, value_col: str = "avg_grade"):
+    def detect_negative_dynamics(
+        self, value_col: str = "avg_grade", time_col: str = "semester", threshold: float = -0.08, min_points: int = 3
+    ) -> Dict[str, Any]:
         """
-        Находит студентов с ухудшающейся динамикой показателя.
+        Выявляет студентов с статистически значимой негативной динамикой.
 
         Args:
-            df: DataFrame с данными по семестрам
-            value_col: колонка показателя
+            value_col: колонка с показателем
+            time_col: колонка времени
+            threshold: порог тренда для отнесения к "риску"
+            min_points: минимальное количество наблюдений у студента
 
         Returns:
-            dict: {'n_students_analyzed', 'at_risk_students', 'risk_percentage'}
+            dict: {
+                'n_students_analyzed': int,
+                'at_risk_count': int,
+                'risk_percentage': float,
+                'threshold': float,
+                'at_risk_students': list[dict],
+                'all_students': list[dict]
+            }
         """
-        return detect_negative_dynamics(df, value_col=value_col)
+        try:
+            analyzer = TimeSeriesAnalyzer(self.df, student_id_col="student_id")
+            return analyzer.detect_negative_dynamics(
+                value_col=value_col, time_col=time_col, threshold=threshold, min_points=min_points
+            )
+        except Exception as e:
+            logger.error(f"Ошибка поиска негативной динамики: {e}")
+            return {
+                "n_students_analyzed": 0,
+                "at_risk_count": 0,
+                "risk_percentage": 0.0,
+                "threshold": threshold,
+                "at_risk_students": [],
+                "all_students": [],
+            }
 
-    def forecast_for_student(self, df: pd.DataFrame, student_id, future_semesters: int = 2):
+    def forecast_student(
+        self, student_id: str, value_col: str = "avg_grade", time_col: str = "semester", periods: int = 2
+    ) -> Dict[str, Any]:
         """
-        Прогнозирует показатель студента на будущие семестры.
+        Прогнозирует значения показателя студента на будущие периоды.
 
         Args:
-            df: DataFrame с данными по семестрам
             student_id: идентификатор студента
-            future_semesters: число семестров для прогноза
+            value_col: колонка с показателем
+            time_col: колонка времени
+            periods: количество будущих периодов для прогноза
 
         Returns:
-            dict: {'future_semesters', 'predictions'}
+            dict: {
+                'student_id': str,
+                'future_periods': list[int],
+                'predictions': list[float],
+                'trend': float
+            }
         """
-        return forecast_grades(df, student_id, future_semesters=future_semesters)
+
+        try:
+            analyzer = TimeSeriesAnalyzer(self.df, student_id_col="student_id")
+            return analyzer.forecast_student(
+                student_id=student_id, value_col=value_col, time_col=time_col, periods=periods
+            )
+        except Exception as e:
+            logger.error(f"Ошибка прогнозирования для студента {student_id}: {e}")
+            return {"error": str(e)}
 
     def select_subset(
         self,
