@@ -7,4 +7,6 @@ def save_plotly_fig(fig, filename="plot", format="png"):
         fig.write_image(f"{filename}.png", scale=2)
     elif format == "svg":
         fig.write_image(f"{filename}.svg")
+    elif format == "pdf":
+        fig.write_image(f"{filename}.pdf")
     return f"{filename}.{format}"

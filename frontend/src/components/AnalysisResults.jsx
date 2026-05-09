@@ -1,5 +1,6 @@
-import { memo } from "react";
+import { memo, useState, useRef } from "react";
 import Plot from "react-plotly.js";
+import { savePlotToFile } from "../api";
 
 /** Хелпер для скачивания JSON как CSV */
 function downloadJSONAsCSV(data, filename) {
@@ -67,21 +68,301 @@ const AnalysisResults = memo(({ result }) => {
     downloadJSONAsCSV(rows, "cluster_profiles");
   };
 
-  // Хелпер для рендеринга Plotly графика из JSON
   const PlotChart = memo(({ data, title, height = 400 }) => {
+    const [isSaving, setIsSaving] = useState(false);
+    const [format, setFormat] = useState("png");
+    const plotRef = useRef(null);
+    const [mode, setMode] = useState("zoom");
+
+    const handleSavePlot = async () => {
+      if (!data || !data.data) return;
+      setIsSaving(true);
+      try {
+        await savePlotToFile(
+          data,
+          title.replace(/[^a-zа-я0-9]/gi, "_"),
+          format,
+        );
+      } catch (err) {
+        console.error("Failed to save plot:", err);
+      } finally {
+        setIsSaving(false);
+      }
+    };
+
+    const getPlotlyFigure = () => {
+      if (plotRef.current && plotRef.current.el) {
+        const plotDiv = plotRef.current.el;
+        // Проверяем, инициализирован ли Plotly в этом div
+        if (plotDiv && plotDiv._fullLayout) {
+          return plotDiv;
+        }
+      }
+      return null;
+    };
+
+    const handleZoomIn = () => {
+      const fig = getPlotlyFigure();
+      if (fig && window.Plotly) {
+        const xRange = fig.layout?.xaxis?.range;
+        const yRange = fig.layout?.yaxis?.range;
+
+        if (xRange && yRange) {
+          const xCenter = (xRange[0] + xRange[1]) / 2;
+          const xHalf = (xRange[1] - xRange[0]) / 2;
+          const yCenter = (yRange[0] + yRange[1]) / 2;
+          const yHalf = (yRange[1] - yRange[0]) / 2;
+
+          // Уменьшаем область на 30% (приближаем)
+          window.Plotly.relayout(fig, {
+            "xaxis.range": [xCenter - xHalf * 0.7, xCenter + xHalf * 0.7],
+            "yaxis.range": [yCenter - yHalf * 0.7, yCenter + yHalf * 0.7],
+          });
+        } else {
+          window.Plotly.relayout(fig, {
+            "xaxis.autorange": true,
+            "yaxis.autorange": true,
+          });
+          setTimeout(() => handleZoomIn(), 50);
+        }
+      }
+    };
+
+    const handleZoomOut = () => {
+      const fig = getPlotlyFigure();
+      if (fig && window.Plotly) {
+        const xRange = fig.layout?.xaxis?.range;
+        const yRange = fig.layout?.yaxis?.range;
+
+        if (xRange && yRange) {
+          const xCenter = (xRange[0] + xRange[1]) / 2;
+          const xHalf = (xRange[1] - xRange[0]) / 2;
+          const yCenter = (yRange[0] + yRange[1]) / 2;
+          const yHalf = (yRange[1] - yRange[0]) / 2;
+
+          // Увеличиваем область на 30% (отдаляем)
+          window.Plotly.relayout(fig, {
+            "xaxis.range": [xCenter - xHalf / 0.7, xCenter + xHalf / 0.7],
+            "yaxis.range": [yCenter - yHalf / 0.7, yCenter + yHalf / 0.7],
+          });
+        } else {
+          window.Plotly.relayout(fig, {
+            "xaxis.autorange": true,
+            "yaxis.autorange": true,
+          });
+        }
+      }
+    };
+
+    const handleAutoScale = () => {
+      const fig = getPlotlyFigure();
+      if (fig && window.Plotly) {
+        window.Plotly.relayout(fig, {
+          "xaxis.autorange": true,
+          "yaxis.autorange": true,
+        });
+      }
+    };
+
+    const handleResetAxes = () => {
+      const fig = getPlotlyFigure();
+      if (fig) {
+        window.Plotly.relayout(fig, {
+          "xaxis.autorange": true,
+          "yaxis.autorange": true,
+        });
+      }
+    };
+
+    const handleSetMode = (newMode) => {
+      setMode(newMode);
+      const fig = getPlotlyFigure();
+      if (fig) {
+        window.Plotly.update(
+          fig,
+          {},
+          { dragmode: newMode === "zoom" ? "zoom" : "pan" },
+        );
+      }
+    };
+
     if (!data || !data.data) return <p className="muted">График не доступен</p>;
+
     return (
-      <div style={{ width: "100%", height }}>
+      <div style={{ width: "100%", height, position: "relative" }}>
+        {/* Панель управления */}
+        <div
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            zIndex: 10,
+            display: "flex",
+            gap: 8,
+            background: "var(--bg-secondary)",
+            padding: "6px 12px",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ display: "flex", gap: 4 }}>
+            <button
+              onClick={() => handleSetMode("zoom")}
+              style={{
+                padding: "4px 8px",
+                fontSize: 12,
+                background:
+                  mode === "zoom" ? "var(--primary)" : "var(--bg-secondary)",
+                border: "1px solid var(--border)",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: mode === "zoom" ? "white" : "var(--text)",
+              }}
+            >
+              🔍 Zoom
+            </button>
+            <button
+              onClick={() => handleSetMode("pan")}
+              style={{
+                padding: "4px 8px",
+                fontSize: 12,
+                background:
+                  mode === "pan" ? "var(--primary)" : "var(--bg-secondary)",
+                border: "1px solid var(--border)",
+                borderRadius: 4,
+                cursor: "pointer",
+                color: mode === "pan" ? "white" : "var(--text)",
+              }}
+            >
+              ✋ Pan
+            </button>
+          </div>
+
+          <div
+            style={{ width: 1, background: "var(--border)", margin: "0 4px" }}
+          />
+
+          <button
+            onClick={handleZoomIn}
+            style={{
+              padding: "4px 8px",
+              fontSize: 12,
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              color: "var(--text)",
+              cursor: "pointer",
+            }}
+          >
+            🔍+
+          </button>
+          <button
+            onClick={handleZoomOut}
+            style={{
+              padding: "4px 8px",
+              fontSize: 12,
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              color: "var(--text)",
+              cursor: "pointer",
+            }}
+          >
+            🔍-
+          </button>
+          <button
+            onClick={handleAutoScale}
+            style={{
+              padding: "4px 8px",
+              fontSize: 12,
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              color: "var(--text)",
+              cursor: "pointer",
+            }}
+          >
+            📐 Auto
+          </button>
+          <button
+            onClick={handleResetAxes}
+            style={{
+              padding: "4px 8px",
+              fontSize: 12,
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              color: "var(--text)",
+              cursor: "pointer",
+            }}
+          >
+            🔄 Reset
+          </button>
+
+          <div
+            style={{ width: 1, background: "var(--border)", margin: "0 4px" }}
+          />
+
+          <select
+            value={format}
+            onChange={(e) => setFormat(e.target.value)}
+            style={{
+              padding: "4px 8px",
+              fontSize: 12,
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              cursor: "pointer",
+              color: "var(--text)",
+            }}
+          >
+            <option value="png">PNG</option>
+            <option value="svg">SVG</option>
+            <option value="pdf">PDF</option>
+          </select>
+          <button
+            onClick={handleSavePlot}
+            disabled={isSaving}
+            style={{
+              padding: "4px 8px",
+              fontSize: 12,
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              color: "var(--text)",
+              cursor: "pointer",
+            }}
+          >
+            {isSaving ? "⏳" : "💾 Скачать"}
+          </button>
+        </div>
+
+        {/* Plotly график */}
         <Plot
+          ref={plotRef}
           data={data.data}
-          layout={{ ...data.layout, title, height, autosize: true }}
+          layout={{
+            ...data.layout,
+            title,
+            height,
+            autosize: true,
+            dragmode: mode === "zoom" ? "zoom" : "pan",
+          }}
           useResizeHandler
           style={{ width: "100%", height: "100%" }}
-          config={{ responsive: true }}
+          config={{
+            responsive: true,
+            displayModeBar: false,
+            displaylogo: false,
+            scrollZoom: true,
+            doubleClick: "reset+autosize",
+          }}
         />
       </div>
     );
   });
+
   PlotChart.displayName = "PlotChart";
 
   return (

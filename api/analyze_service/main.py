@@ -248,6 +248,64 @@ async def student_trajectory(request: TrajectoryRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/plot/save")
+async def save_plot(data: dict):
+    """
+    Сохраняет Plotly JSON в PNG/SVG|/PDF и возвращает файл.
+    data: {"figure": {...}, "filename": "plot", "format": "png"}
+    """
+
+    import plotly.graph_objects as go
+    import os
+    from fastapi.responses import FileResponse
+    import tempfile
+    from starlette.background import BackgroundTask
+
+    try:
+        fig = go.Figure(data=data["figure"]["data"], layout=data["figure"]["layout"])
+        filename = data.get("filename", "plot")
+        format = data.get("format", "png")
+
+        # Создаём временный файл
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{format}") as tmp:
+            tmp_path = tmp.name
+
+        # Сохраняем изображение
+        if format == "png":
+            fig.write_image(tmp_path, scale=2, width=800, height=600)
+        elif format == "svg":
+            fig.write_image(tmp_path)
+        elif format == "pdf":
+            fig.write_image(tmp_path)
+        else:
+            os.unlink(tmp_path)
+            raise HTTPException(400, f"Unsupported format: {format}")
+
+        # Функция для удаления файла после отправки
+        def delete_file():
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                    print(f"[DEBUG] Deleted temp file: {tmp_path}")
+            except Exception as e:
+                print(f"[ERROR] Failed to delete temp file: {e}")
+
+        # Возвращаем файл с фоновой задачей на удаление
+        return FileResponse(
+            path=tmp_path,
+            media_type=f"image/{format}",
+            filename=f"{filename}.{format}",
+            background=BackgroundTask(delete_file),
+        )
+
+    except Exception as e:
+        print(f"[ERROR] save_plot failed: {str(e)}")
+        # Если ошибка, пытаемся удалить временный файл
+        if "tmp_path" in locals() and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise HTTPException(500, detail=str(e))
+
+
 @router.post("/timeseries/negative_dynamics")
 async def negative_dynamics(request: TrajectoryRequest):
     """Поиск студентов с отрицательной динамикой."""

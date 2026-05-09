@@ -75,6 +75,29 @@ export async function runFullAnalysis(data, params = {}) {
   });
 }
 
+export async function savePlotToFile(
+  figure,
+  filename = "plot",
+  format = "png",
+) {
+  const response = await fetch("/api/v1/analyze/plot/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ figure, filename, format }),
+  });
+
+  if (!response.ok) throw new Error("Failed to save plot");
+
+  // Получаем файл и скачиваем
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${filename}.${format}`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 /** Создание композитной оценки */
 export async function createCompositeScore(
   data,
