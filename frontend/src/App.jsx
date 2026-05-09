@@ -152,7 +152,7 @@ function MainPage() {
   const [saveName, setSaveName] = useState("");
   const [saveDesc, setSaveDesc] = useState("");
   const [saving, setSaving] = useState(false);
-
+  const [sheetTypeInfo, setSheetTypeInfo] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -161,7 +161,7 @@ function MainPage() {
         setRestored(true);
       });
     }
-  }, [shared.datasetId, shared.loadFromDB, restored]);
+  }, [shared, restored]);
   useEffect(() => {
     import("react-plotly.js").then((module) => setPlot(() => module.default));
   }, []);
@@ -367,7 +367,18 @@ function MainPage() {
 
   /** Вспомогательная функция для обновления превью и данных */
   function setDataAndPreview(data) {
-    const filtered = filterServiceCols(data);
+    if (!data || !data.length) return;
+    let filtered = filterServiceCols(data);
+    if (
+      filtered.length > 0 &&
+      !Object.prototype.hasOwnProperty.call(filtered[0], "student_id")
+    ) {
+      if (Object.prototype.hasOwnProperty.call(filtered[0], "user")) {
+        filtered = filtered.map((row) => ({ ...row, student_id: row.user }));
+      } else if (Object.prototype.hasOwnProperty.call(filtered[0], "user_id")) {
+        filtered = filtered.map((row) => ({ ...row, student_id: row.user_id }));
+      }
+    }
     setCsvData(filtered);
     shared.updateData(filtered);
     if (filtered && filtered.length > 0) {
@@ -397,7 +408,6 @@ function MainPage() {
       );
       // Сохраняем сырые данные и показываем DataEnrichment
       setRawExcelData(res.data);
-      setSheetPreview(null);
     } catch (e) {
       setError("Ошибка обработки Excel: " + e.message);
     } finally {
@@ -414,7 +424,8 @@ function MainPage() {
       const res = await handleImputation(rawExcelData, strategy, threshold);
       setDataAndPreview(res.data);
       setRawExcelData(null);
-      setSheetPreview(null); // Больше не нужен
+      setSheetPreview(null);
+      setSheetTypeInfo(null);
       setTargetSelected(false);
     } catch (e) {
       setError("Ошибка обогащения: " + e.message);
@@ -428,7 +439,8 @@ function MainPage() {
     if (!rawExcelData) return;
     setDataAndPreview(rawExcelData);
     setRawExcelData(null);
-    setSheetPreview(null); // Больше не нужен
+    setSheetPreview(null);
+    setSheetTypeInfo(null);
     setTargetSelected(false);
   }
 
@@ -455,6 +467,10 @@ function MainPage() {
         })),
       );
       setSheetPreview(preview);
+      setSheetTypeInfo({
+        group_label: preview.group_label,
+        detected_group: preview.detected_group,
+      });
       const isNumericOnly = preview.detected_group === "numeric";
       if (isNumericOnly) {
         // Для чисто числовых листов сразу обрабатываем без маппера
@@ -692,8 +708,8 @@ function MainPage() {
           {/* --- ОБОГАЩЕНИЕ ДАННЫХ --- */}
           {rawExcelData && !csvData && (
             <DataEnrichment
-              groupLabel={sheetPreview?.group_label}
-              detectedGroup={sheetPreview?.detected_group}
+              groupLabel={sheetTypeInfo?.group_label}
+              detectedGroup={sheetTypeInfo?.detected_group}
               onConfirm={onEnrichmentConfirm}
               onSkip={onEnrichmentSkip}
             />

@@ -16,6 +16,7 @@ async function request(url, options = {}) {
     clearTimeout(timeout);
   }
 }
+
 export async function healthcheck() {
   return request("/health");
 }

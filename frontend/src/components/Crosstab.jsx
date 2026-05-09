@@ -2,10 +2,15 @@ import { useState } from "react";
 import Plot from "react-plotly.js";
 import { buildCrosstab } from "../api";
 import { parseFile } from "../utils/parseFile";
-import { useSharedData } from "../hooks/useSharedData";
+import { useSharedData } from "../hooks/useDatasetStore";
 
 export default function Crosstab() {
-  const { data: sharedData, columns: sharedCols, hasShared } = useSharedData();
+  const {
+    data: sharedData,
+    columns: sharedCols,
+    hasShared,
+    isLoading,
+  } = useSharedData();
   const [fileData, setFileData] = useState(null);
   const [rowVar, setRowVar] = useState("");
   const [colVar, setColVar] = useState("");
@@ -16,6 +21,14 @@ export default function Crosstab() {
   const [binMethod, setBinMethod] = useState("cut");
   const activeData = fileData || sharedData;
   const activeCols = fileData ? Object.keys(fileData[0] || {}) : sharedCols;
+  console.log(
+    "[Crosstab] sharedData:",
+    sharedData?.length,
+    "hasShared:",
+    hasShared,
+    "isLoading:",
+    isLoading,
+  );
 
   function initData(data) {
     if (!data?.length) return;
@@ -41,7 +54,20 @@ export default function Crosstab() {
   useState(() => {
     if (hasShared && !fileData && !rowVar) initData(sharedData);
   });
-
+  if (isLoading) {
+    return (
+      <div className="card">
+        <p>⏳ Загрузка данных из хранилища...</p>
+      </div>
+    );
+  }
+  if (!hasShared && !fileData) {
+    return (
+      <div className="card">
+        <p className="muted">Нет данных. Загрузите файл на главной странице.</p>
+      </div>
+    );
+  }
   // Функция скачивания кросс-таблицы
   const downloadCrosstab = (result) => {
     if (!result?.table) return;
@@ -71,6 +97,7 @@ export default function Crosstab() {
     link.click();
     document.body.removeChild(link);
   };
+
   async function onRun() {
     if (!activeData || !rowVar || !colVar) return;
     setBusy(true);

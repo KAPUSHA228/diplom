@@ -9,7 +9,9 @@ function downloadJSONAsCSV(data, filename) {
     "data:text/csv;charset=utf-8," +
     [
       keys.join(","),
-      ...data.map((row) => keys.map((k) => JSON.stringify(row[k] || "")).join(",")),
+      ...data.map((row) =>
+        keys.map((k) => JSON.stringify(row[k] || "")).join(","),
+      ),
     ].join("\n");
   const encodedUri = encodeURI(csvContent);
   const link = document.createElement("a");
@@ -66,7 +68,7 @@ const AnalysisResults = memo(({ result }) => {
   };
 
   // Хелпер для рендеринга Plotly графика из JSON
-  const PlotChart = ({ data, title, height = 400 }) => {
+  const PlotChart = memo(({ data, title, height = 400 }) => {
     if (!data || !data.data) return <p className="muted">График не доступен</p>;
     return (
       <div style={{ width: "100%", height }}>
@@ -79,11 +81,11 @@ const AnalysisResults = memo(({ result }) => {
         />
       </div>
     );
-  };
+  });
+  PlotChart.displayName = "PlotChart";
 
   return (
     <div className="analysis-results">
-
       {/* Метрики на тесте */}
       <section className="card">
         <h2>📊 Метрики на тестовой выборке</h2>
@@ -110,7 +112,9 @@ const AnalysisResults = memo(({ result }) => {
             <tbody>
               {Object.entries(cv_results).map(([name, v]) => (
                 <tr key={name}>
-                  <td><b>{name}</b></td>
+                  <td>
+                    <b>{name}</b>
+                  </td>
                   <td>{v.mean?.toFixed(4)}</td>
                   <td>± {v.std?.toFixed(4)}</td>
                 </tr>
@@ -125,7 +129,11 @@ const AnalysisResults = memo(({ result }) => {
         <section className="card">
           <h2>🔍 Отобранные признаки ({selected_features.length})</h2>
           <div className="tags">
-            {selected_features.map((f) => <span key={f} className="tag">{f}</span>)}
+            {selected_features.map((f) => (
+              <span key={f} className="tag">
+                {f}
+              </span>
+            ))}
           </div>
         </section>
       )}
@@ -169,11 +177,14 @@ const AnalysisResults = memo(({ result }) => {
       {/* SHAP объяснения */}
       {explanations && explanations.length > 0 && (
         <section className="card">
-          <h2>💡 SHAP объяснения (топ студентов: {result.target_col || "Target"})</h2>
+          <h2>
+            💡 SHAP объяснения (топ студентов: {result.target_col || "Target"})
+          </h2>
           {explanations.slice(0, 5).map((exp, i) => (
             <details key={i} className="shap-exp">
               <summary>
-                Студент #{exp.student_index ?? i} — Вероятность: {((exp.risk_probability || 0) * 100).toFixed(1)}%
+                Студент #{exp.student_index ?? i} — Вероятность:{" "}
+                {((exp.risk_probability || 0) * 100).toFixed(1)}%
               </summary>
               <pre>{exp.explanation}</pre>
             </details>
@@ -182,33 +193,56 @@ const AnalysisResults = memo(({ result }) => {
       )}
 
       {/* === ПАНЕЛЬ ЭКСПОРТА === */}
-      <div className="card" style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16, flexWrap: "wrap" }}>
+      <div
+        className="card"
+        style={{
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+          marginTop: 16,
+          flexWrap: "wrap",
+        }}
+      >
         <h3 style={{ margin: 0, marginRight: "auto" }}>💾 Экспорт</h3>
-        <button onClick={handleExportPredictions} disabled={!result.predictions?.length}>
+        <button
+          onClick={handleExportPredictions}
+          disabled={!result.predictions?.length}
+        >
           📥 Предсказания (CSV)
         </button>
-        <button onClick={handleExportExplanations} disabled={!explanations.length}>
+        <button
+          onClick={handleExportExplanations}
+          disabled={!explanations.length}
+        >
           📥 SHAP Объяснения (CSV)
         </button>
-        <button onClick={handleExportClusters} disabled={!Object.keys(cluster_profiles).length}>
+        <button
+          onClick={handleExportClusters}
+          disabled={!Object.keys(cluster_profiles).length}
+        >
           📥 Профили кластеров (CSV)
         </button>
       </div>
     </div>
   );
 });
+AnalysisResults.displayName = "AnalysisResults";
 
 function MetricCard({ label, value }) {
   return (
     <div className="metric-card">
       <div className="metric-label">{label}</div>
-      <div className="metric-value">{typeof value === "number" ? value.toFixed(4) : "—"}</div>
+      <div className="metric-value">
+        {typeof value === "number" ? value.toFixed(4) : "—"}
+      </div>
     </div>
   );
 }
 
 function ClusterTable({ profiles }) {
-  const rows = Array.isArray(profiles) ? profiles : Object.entries(profiles).map(([k, v]) => ({ cluster: k, ...v }));
+  const rows = Array.isArray(profiles)
+    ? profiles
+    : Object.entries(profiles).map(([k, v]) => ({ cluster: k, ...v }));
   if (rows.length === 0) return <p className="muted">Нет данных о кластерах</p>;
 
   const allKeys = new Set();
@@ -219,12 +253,20 @@ function ClusterTable({ profiles }) {
     <div className="table-wrap">
       <table className="matrix">
         <thead>
-          <tr>{cols.map((c) => <th key={c}>{c}</th>)}</tr>
+          <tr>
+            {cols.map((c) => (
+              <th key={c}>{c}</th>
+            ))}
+          </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
             <tr key={i}>
-              {cols.map((c) => <td key={c}>{typeof r[c] === "number" ? r[c].toFixed(2) : r[c]}</td>)}
+              {cols.map((c) => (
+                <td key={c}>
+                  {typeof r[c] === "number" ? r[c].toFixed(2) : r[c]}
+                </td>
+              ))}
             </tr>
           ))}
         </tbody>

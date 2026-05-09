@@ -19,6 +19,8 @@ export const useDatasetStore = create(
       currentDatasetId: null,
       metadata: {},
       isLoading: false,
+      hydrated: false,
+
       // Основной метод обновления
       setData: (data, metadata = {}) => {
         if (!data || !Array.isArray(data)) {
@@ -55,19 +57,36 @@ export const useDatasetStore = create(
       },
       //Восстановление данных при монтировании
       hydrate: async () => {
-        const { currentDatasetId } = get();
+        const { hydrated, currentDatasetId, isLoading } = get();
+
+        // Не запускаем повторно, если уже загружено или загрузка идёт
+        if (hydrated || isLoading) {
+          console.log("[hydrate] уже загружено или загрузка идёт, пропускаем");
+          return;
+        }
+
+        console.log(
+          "[hydrate] начинаем загрузку, datasetId:",
+          currentDatasetId,
+        );
+
         if (currentDatasetId) {
           set({ isLoading: true });
-          await get().loadFromDB(currentDatasetId);
-          set({ isLoading: false });
+          const success = await get().loadFromDB(currentDatasetId);
+          set({ hydrated: true, isLoading: false });
+          console.log("[hydrate] загрузка завершена, успешно:", success);
+        } else {
+          // Если нет datasetId, просто отмечаем как загруженные
+          set({ hydrated: true });
         }
       },
 
       loadFromDB: async (datasetId) => {
         try {
-          set({ isLoading: true });
+          console.log("[loadFromDB] загрузка датасета:", datasetId);
           const record = await db.datasets.get(datasetId);
           if (record) {
+            console.log("[loadFromDB] найдено записей:", record.data?.length);
             set({
               currentData: record.data,
               currentColumns: record.columns,
@@ -75,11 +94,11 @@ export const useDatasetStore = create(
               metadata: record.metadata,
             });
             return true;
+          } else {
+            console.log("[loadFromDB] датасет не найден");
           }
         } catch (err) {
           console.error("Failed to load from IndexedDB:", err);
-        } finally {
-          set({ isLoading: false });
         }
         return false;
       },
@@ -90,6 +109,8 @@ export const useDatasetStore = create(
           currentColumns: [],
           currentDatasetId: null,
           metadata: {},
+          hydrated: false,
+          isLoading: false,
         });
       },
     }),
@@ -108,11 +129,14 @@ export const useDatasetStore = create(
 export const useSharedData = () => {
   const store = useDatasetStore();
   useEffect(() => {
-    if (!store.hydrated) {
-      store.hydrate();
-      // можно добавить флаг hydrated в store
-    }
-  }, []);
+    store.hydrate();
+  }, [store, store.hydrate]);
+  console.log(
+    "[useSharedData] currentData length:",
+    store.currentData.length,
+    "isLoading:",
+    store.isLoading,
+  );
   return {
     data: store.currentData,
     columns: store.currentColumns,
@@ -123,6 +147,5 @@ export const useSharedData = () => {
     updateData: store.setData,
     loadFromDB: store.loadFromDB,
     clearData: store.clearData,
-    hydrate: store.hydrate,
   };
 };

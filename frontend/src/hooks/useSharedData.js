@@ -7,6 +7,7 @@ const SHARED_DATA_KEY = "shared_dataset";
  * Использует sessionStorage — данные живут до закрытия вкладки.
  * СИНХРОННОЕ чтение при инициализации — данные доступны сразу.
  */
+
 export function useSharedData() {
   const [state, setState] = useState(() => {
     try {
@@ -14,16 +15,26 @@ export function useSharedData() {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && parsed.length > 0) {
-          return { data: parsed, columns: Object.keys(parsed[0]), hasShared: true };
+          return {
+            data: parsed,
+            columns: Object.keys(parsed[0]),
+            hasShared: true,
+          };
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return { data: null, columns: [], hasShared: false };
   });
 
   const updateData = useCallback((newData) => {
     if (!newData || !newData.length) return;
-    setState({ data: newData, columns: Object.keys(newData[0]), hasShared: true });
+    setState({
+      data: newData,
+      columns: Object.keys(newData[0]),
+      hasShared: true,
+    });
     sessionStorage.setItem(SHARED_DATA_KEY, JSON.stringify(newData));
   }, []);
 

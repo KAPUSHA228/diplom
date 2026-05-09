@@ -115,6 +115,15 @@ export default function TimeSeries() {
           timeCol,
         );
         console.log("[TimeSeries] Trajectory result:", res);
+        console.log("[TimeSeries] Individual result:", res);
+        console.log(
+          "[TimeSeries] FULL API response:",
+          JSON.stringify(res, null, 2),
+        );
+        console.log("[TimeSeries] Response has chart?", !!res.chart);
+        console.log("[TimeSeries] Response has figure?", !!res.figure);
+        console.log("[TimeSeries] Response keys:", Object.keys(res));
+        // =========================================
         setResult({ mode, data: res });
       } else if (mode === "negative") {
         const res = await findNegativeDynamics(safeData, valueCol, timeCol);
@@ -138,6 +147,7 @@ export default function TimeSeries() {
       setBusy(false);
     }
   }
+
   if (hasShared && students.length > 0) {
     const avgRowsPerStudent = safeData.length / students.length;
     if (avgRowsPerStudent < 2.5) {
@@ -266,13 +276,13 @@ export default function TimeSeries() {
       {result && (
         <div style={{ marginTop: 24 }}>
           {result.mode === "individual" &&
-            result.data?.figure &&
+            result.data?.chart &&
             selectedStudent && (
               <>
                 <h3>Траектория студента {selectedStudent}</h3>
                 <Plot
-                  data={result.data.figure.data}
-                  layout={result.data.figure.layout}
+                  data={result.data.chart.data}
+                  layout={result.data.chart.layout}
                   config={{ responsive: true }}
                   style={{ width: "100%" }}
                 />

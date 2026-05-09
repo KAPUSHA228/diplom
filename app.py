@@ -26,7 +26,7 @@ from ml_core.logger import MLLogger
 from ml_core.drift_detector import DataDriftDetector
 from ml_core.analysis import correlation_analysis
 from ml_core.features import build_composite_score
-from ml_core.timeseries import forecast_grades
+from ml_core.timeseries import TimeSeriesAnalyzer
 from ml_core.crosstab import export_crosstab
 from ml_core.error_handler import safe_execute, logger
 from ml_core.utils import save_plotly_fig
@@ -818,8 +818,6 @@ if st.session_state.analysis_completed:
     with tab3:
         st.write("### Анализ временных рядов")
 
-        from ml_core.timeseries import detect_negative_dynamics, analyze_student_trajectory
-
         # Проверяем наличие необходимых колонок
         if "semester" not in df.columns:
             st.warning("⚠️ Для анализа временных рядов нужна колонка 'semester'")
@@ -843,7 +841,8 @@ if st.session_state.analysis_completed:
 
                 if st.button("Выявить студентов с отрицательной динамикой"):
                     with st.spinner("Анализ..."):
-                        dynamics = detect_negative_dynamics(
+                        analyzer = TimeSeriesAnalyzer(df, student_id_col="student_id")
+                        dynamics = analyzer.detect_negative_dynamics(
                             df, student_id_col="student_id", time_col="semester", value_col=value_col, threshold=-0.05
                         )
 
@@ -869,9 +868,11 @@ if st.session_state.analysis_completed:
                                     dynamics["at_risk_students"]["student_id"].tolist(),
                                 )
                                 if st.button("Показать траекторию"):
-                                    trajectory = analyze_student_trajectory(
+                                    analyzer = TimeSeriesAnalyzer(df, student_id_col="student_id")
+                                    trajectory = analyzer.analyze_student_trajectory(
                                         df, student_id, time_col="semester", value_col=value_col
                                     )
+
                                     if trajectory["figure"]:
                                         st.plotly_chart(trajectory["figure"])
                                     st.write(f"**Тренд:** {trajectory['trend']:.3f}")
@@ -879,13 +880,18 @@ if st.session_state.analysis_completed:
                             else:
                                 st.success("✅ Студентов с отрицательной динамикой не обнаружено")
                 if st.button("Показать траекторию"):
-                    trajectory = safe_execute(analyze_student_trajectory, df, student_id, value_col=value_col)
+                    analyzer = TimeSeriesAnalyzer(df, student_id_col="student_id")
+
+                    trajectory = safe_execute(analyzer.analyze_student_trajectory, df, student_id, value_col=value_col)
                     if trajectory and "figure" in trajectory:
                         st.plotly_chart(trajectory["figure"])
 
                 # Новый блок прогноза
                 if st.button("Прогнозировать на следующие семестры"):
-                    forecast = safe_execute(forecast_grades, df, student_id, value_col=value_col, future_semesters=2)
+                    analyzer = TimeSeriesAnalyzer(df, student_id_col="student_id")
+                    forecast = safe_execute(
+                        analyzer.forecast_grades, df, student_id, value_col=value_col, future_semesters=2
+                    )
                     if forecast:
                         st.write("**Прогноз на будущие семестры:**")
                         for sem, pred in zip(forecast["future_semesters"], forecast["predictions"]):

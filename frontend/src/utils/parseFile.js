@@ -19,7 +19,9 @@ export async function parseFile(file) {
     if (!allData.length) return { headers: [], rows: [], allData: [] };
 
     const headers = Object.keys(allData[0]);
-    const previewRows = allData.slice(0, 5).map((r) => headers.map((h) => String(r[h] ?? "")));
+    const previewRows = allData
+      .slice(0, 5)
+      .map((r) => headers.map((h) => String(r[h] ?? "")));
 
     return { headers, rows: previewRows, allData };
   }
