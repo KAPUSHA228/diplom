@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState, lazy } from "react";
+import { useEffect, useMemo, useState, lazy, useRef } from "react";
 import { HashRouter, Routes, Route, Link, useLocation } from "react-router-dom";
+//import ErrorBoundary from "./components/ErrorBoundary";
 import {
   healthcheck,
   uploadForCorrelation,
-  runFullAnalysis,
   getExcelPreview,
   processExcel,
   trainAsyncJson,
   getTaskStatus,
   saveExperiment,
+  getFullAnalysisStatus,
+  runFullAnalysisAsync,
 } from "./api";
 // Все компоненты, которые не видны сразу, загружаем лениво
 const AnalysisSidebar = lazy(() => import("./components/AnalysisSidebar"));
@@ -76,7 +78,13 @@ function ThemeToggle() {
   );
 }
 
-function PollingTask({ taskId, title }) {
+// App.jsx — универсальный PollingTask
+function PollingTask({
+  taskId,
+  title,
+  onStatus,
+  getStatusFunc = getTaskStatus,
+}) {
   const [task, setTask] = useState(null);
   const [error, setError] = useState("");
 
@@ -85,8 +93,9 @@ function PollingTask({ taskId, title }) {
     let stopped = false;
     const timer = setInterval(async () => {
       try {
-        const status = await getTaskStatus(taskId);
+        const status = await getStatusFunc(taskId);
         if (!stopped) setTask(status);
+        if (onStatus) onStatus(status);
         if (status.status === "SUCCESS" || status.status === "FAILURE")
           clearInterval(timer);
       } catch (e) {
@@ -98,7 +107,7 @@ function PollingTask({ taskId, title }) {
       stopped = true;
       clearInterval(timer);
     };
-  }, [taskId]);
+  }, [taskId, getStatusFunc, onStatus]);
 
   if (!taskId) return null;
   return (
@@ -137,16 +146,16 @@ function MainPage() {
 
   const [file, setFile] = useState(null);
   const [csvData, setCsvData] = useState(null);
+  const csvDataRef = useRef(null);
+  const [refreshFlag, setRefreshFlag] = useState(0);
   const [csvPreview, setCsvPreview] = useState({
     headers: [],
     rows: [],
     rowCount: 0,
-    riskPct: null,
   });
   const [corrResult, setCorrResult] = useState(null);
   const [trainTaskId, setTrainTaskId] = useState("");
   const [analysisResult, setAnalysisResult] = useState(null);
-
   // Состояние для сохранения эксперимента
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
@@ -155,44 +164,82 @@ function MainPage() {
   const [sheetTypeInfo, setSheetTypeInfo] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [analysisTaskId, setAnalysisTaskId] = useState("");
+
+  // Функция запуска асинхронного анализа
+  async function onRunAnalysisAsync(params) {
+    const fullData = csvDataRef.current;
+    if (!fullData) return;
+
+    setBusy(true);
+    try {
+      const res = await runFullAnalysisAsync(fullData, {
+        ...params,
+        target_col: targetColumn,
+      });
+      setAnalysisTaskId(res.task_id);
+      // Запускаем polling
+      pollAnalysisStatus(res.task_id);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Polling статуса
+  const pollAnalysisStatus = (taskId) => {
+    console.log("Polling taskId:", taskId);
+    const interval = setInterval(async () => {
+      try {
+        const status = await getFullAnalysisStatus(taskId);
+        //setAnalysisStatus(status);
+
+        if (status.status === "SUCCESS") {
+          clearInterval(interval);
+          setAnalysisResult(status.result);
+          // обновляем sharedData
+          if (status.result?.data_with_clusters) {
+            shared.updateData(status.result.data_with_clusters);
+          }
+        } else if (status.status === "FAILURE") {
+          clearInterval(interval);
+          setError(status.error || "Analysis failed");
+        }
+      } catch (err) {
+        console.error("Polling error:", err);
+      }
+    }, 2000);
+  };
+
   useEffect(() => {
     if (!restored && shared.datasetId) {
-      shared.loadFromDB(shared.datasetId).then(() => {
-        setRestored(true);
-      });
+      setRestored(true);
     }
   }, [shared, restored]);
+
   useEffect(() => {
     import("react-plotly.js").then((module) => setPlot(() => module.default));
   }, []);
+
   // Восстановление из shared dataset при монтировании (переключение вкладок / F5)
   useEffect(() => {
-    console.log("[MainPage] shared:", {
-      hasShared: shared.hasShared,
-      dataLen: shared.data?.length,
-      csvData: !!csvData,
-      file: !!file,
-    });
-    if (shared.hasShared && !csvData && !file) {
-      setCsvData(shared.data);
-      if (shared.data.length > 0) {
-        const headers = Object.keys(shared.data[0]);
-        const previewRows = shared.data
-          .slice(0, 5)
-          .map((r) => headers.map((h) => String(r[h] ?? "")));
+    const loadPreview = async () => {
+      const previewRows = await shared.getPreview(5);
+      if (previewRows.length) {
+        const headers = Object.keys(previewRows[0]);
         setCsvPreview({
           headers,
-          rows: previewRows,
-          rowCount: shared.data.length,
+          rows: previewRows.map((r) => headers.map((h) => String(r[h] ?? ""))),
+          rowCount: shared.metadata.rowCount || previewRows.length,
         });
-        console.log(
-          "[MainPage] данные восстановлены:",
-          shared.data.length,
-          "строк",
-        );
       }
+    };
+
+    if (shared.hasShared) {
+      loadPreview();
     }
-  }, [shared.hasShared, shared.data, csvData, file]);
+  }, [shared, shared.hasShared, shared.metadata.rowCount]);
 
   // Excel Mapping state
   const [sheetPreview, setSheetPreview] = useState(null); // Данные для SheetMapper
@@ -248,19 +295,48 @@ function MainPage() {
 
   // Доступные колонки для выбора target
   const targetCandidates = useMemo(() => {
-    if (!csvData || !csvData.length) return [];
-    const allKeys = Object.keys(csvData[0]);
-    return allKeys.filter((k) => !EXCLUDE_COLS.has(k.toLowerCase()));
-  }, [csvData, EXCLUDE_COLS]);
-
+    const data = csvDataRef.current;
+    if (!data?.length) return [];
+    const allKeys = Object.keys(data[0]);
+    console.log("[targetCandidates] allKeys:", allKeys);
+    console.log("[targetCandidates] EXCLUDE_COLS:", [...EXCLUDE_COLS]);
+    const filtered = allKeys.filter((k) => !EXCLUDE_COLS.has(k.toLowerCase()));
+    console.log("[targetCandidates] filtered:", filtered);
+    return filtered;
+  }, [EXCLUDE_COLS, refreshFlag]);
+  // Отладка — временно, потом удалить
+  useEffect(() => {
+    console.log("=== ОТЛАДКА ПОСЛЕ ОБНОВЛЕНИЯ ===");
+    console.log("csvDataRef.current?.length:", csvDataRef.current?.length);
+    console.log("targetCandidates:", targetCandidates);
+    console.log("targetSelected:", targetSelected);
+    console.log("sheetPreview:", sheetPreview);
+    console.log("rawExcelData:", rawExcelData);
+    console.log(
+      "Условие показа:",
+      csvData?.length > 0 &&
+        !targetSelected &&
+        targetCandidates?.length > 0 &&
+        !sheetPreview &&
+        !rawExcelData,
+    );
+  }, [csvData, targetSelected, targetCandidates, sheetPreview, rawExcelData]);
   // Статистика по выбранной колонке
   const targetStats = useMemo(() => {
-    if (!targetColumn || !csvData) return null;
-    const vals = csvData
-      .map((r) => r[targetColumn])
-      .filter((v) => v !== "" && v != null);
-    const unique = new Set(vals).size;
+    if (!targetColumn) return null;
+    const data = csvDataRef.current;
+    if (!data?.length) return null;
+
+    const sampleSize = Math.min(data.length, 500);
+    const vals = [];
+    for (let i = 0; i < sampleSize; i++) {
+      const val = data[i][targetColumn];
+      if (val !== "" && val != null) vals.push(val);
+    }
+
+    // Определяем тип на основе сэмпла
     const isNumeric = vals.every((v) => typeof v === "number");
+    const unique = new Set(vals).size;
     return {
       type: isNumeric ? "числовой" : "категориальный",
       unique,
@@ -268,52 +344,13 @@ function MainPage() {
       max: isNumeric ? Math.max(...vals).toFixed(2) : null,
       needsBinarize: isNumeric && unique > 2,
     };
-  }, [targetColumn, csvData]);
+  }, [targetColumn]);
 
   /** Единое условие «можно запускать полный анализ» — сайдбар и будущие проверки опираются на это. */
   const canRun = useMemo(
     () => Boolean(csvData?.length) && targetSelected && !busy,
     [csvData, targetSelected, busy],
   );
-
-  async function onRunAnalysis(params) {
-    if (!csvData) return;
-    setBusy(true);
-    setError("");
-    setAnalysisResult(null);
-    try {
-      const res = await runFullAnalysis(csvData, {
-        ...params,
-        target_col: targetColumn,
-      });
-      setAnalysisResult(res);
-
-      // Если в результате анализа есть данные с кластерами — добавляем их в sharedData
-      if (res.data_with_clusters && Array.isArray(res.data_with_clusters)) {
-        shared.updateData(res.data_with_clusters);
-        console.log(
-          "[MainPage] sharedData обновлён с колонкой кластеров:",
-          res.data_with_clusters[0]
-            ? Object.keys(res.data_with_clusters[0])
-            : [],
-        );
-      }
-      // Альтернативный вариант (если бэкенд возвращает predictions или labeled_data)
-      else if (res.labeled_data && Array.isArray(res.labeled_data)) {
-        shared.updateData(res.labeled_data);
-      } else if (res.predictions && Array.isArray(res.predictions)) {
-        // Если кластеры пришли только в predictions — можно мержить, но это сложнее
-        console.warn("[MainPage] Кластеры не найдены в основном результате");
-      }
-
-      // Сохраняем в localStorage для Experiments.jsx
-      localStorage.setItem("last_analysis_result", JSON.stringify(res));
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function onCorrelation() {
     if (!file) return;
@@ -368,20 +405,29 @@ function MainPage() {
   /** Вспомогательная функция для обновления превью и данных */
   function setDataAndPreview(data) {
     if (!data || !data.length) return;
+
+    // Сначала фильтруем служебные колонки
+    console.log(
+      "[setDataAndPreview] Before filter, columns:",
+      Object.keys(data[0] || {}),
+    );
+
     let filtered = filterServiceCols(data);
-    if (
-      filtered.length > 0 &&
-      !Object.prototype.hasOwnProperty.call(filtered[0], "student_id")
-    ) {
-      if (Object.prototype.hasOwnProperty.call(filtered[0], "user")) {
-        filtered = filtered.map((row) => ({ ...row, student_id: row.user }));
-      } else if (Object.prototype.hasOwnProperty.call(filtered[0], "user_id")) {
-        filtered = filtered.map((row) => ({ ...row, student_id: row.user_id }));
-      }
-    }
-    setCsvData(filtered);
+
+    console.log(
+      "[setDataAndPreview] After filter, columns:",
+      Object.keys(filtered[0] || {}),
+    );
+    // Сохраняем отфильтрованные данные в ref
+    csvDataRef.current = filtered;
+    // В состояние — первые 100 строк для UI
+    setCsvData(filtered.slice(0, 100));
+
+    // Обновляем общий датасет
     shared.updateData(filtered);
-    if (filtered && filtered.length > 0) {
+    setRefreshFlag((prev) => prev + 1);
+    // Обновляем превью
+    if (filtered.length > 0) {
       const headers = Object.keys(filtered[0]);
       const previewRows = filtered
         .slice(0, 5)
@@ -390,6 +436,15 @@ function MainPage() {
     } else {
       setCsvPreview({ headers: [], rows: [], rowCount: 0, riskPct: null });
     }
+    console.log("[setDataAndPreview] filtered length:", filtered.length);
+    console.log(
+      "[setDataAndPreview] filtered columns:",
+      Object.keys(filtered[0] || {}),
+    );
+    console.log(
+      "[setDataAndPreview] csvDataRef.current length:",
+      csvDataRef.current?.length,
+    );
   }
 
   /** Обработчик подтверждения маппинга из SheetMapper */
@@ -513,51 +568,38 @@ function MainPage() {
     setSelectedSheet("");
     setTargetColumn("");
     setTargetSelected(false);
-    if (!next) {
-      setCsvPreview({ headers: [], rows: [], rowCount: 0, riskPct: null });
-      return;
-    }
+
+    if (!next) return;
 
     const isExcel = next.name.endsWith(".xlsx") || next.name.endsWith(".xls");
 
     try {
+      let allRows = [];
+
       if (isExcel) {
-        // --- Excel: читаем имена листов локально ---
+        // ========== EXCEL: читаем листы ==========
         const XLSX = await import("xlsx");
         const buf = await next.arrayBuffer();
         const wb = XLSX.read(buf, { type: "array" });
-        const sheetNames = wb.SheetNames;
-        setExcelSheets(sheetNames);
 
-        if (sheetNames.length === 1) {
-          // Один лист — сразу загружаем превью
-          setSelectedSheet(sheetNames[0]);
-          loadSheetPreview(next, sheetNames[0]);
-        } else {
-          // Много листов — ждём выбора пользователя
-          setCsvPreview({ headers: [], rows: [], rowCount: 0, riskPct: null });
+        const sheetNames = wb.SheetNames;
+        if (sheetNames.length > 1) {
+          setExcelSheets(sheetNames);
+          setCsvPreview({ headers: [], rows: [], rowCount: 0 });
+          return;
         }
+
+        // Один лист — читаем сразу
+        const sheet = wb.Sheets[sheetNames[0]];
+        allRows = XLSX.utils.sheet_to_json(sheet, { defval: null });
       } else {
-        // --- CSV (единый поток через DataEnrichment, как Excel) ---
-        setSheetPreview(null);
+        // ========== CSV: читаем напрямую ==========
         const text = await next.text();
         const lines = text.split(/\r?\n/).filter(Boolean);
         if (lines.length === 0) return;
-        const headers = lines[0].split(",").map((h) => h.trim());
-        const riskIdx = headers.indexOf("risk_flag");
-        let riskPct = null;
-        if (riskIdx >= 0) {
-          const vals = lines
-            .slice(1)
-            .map((l) => Number((l.split(",")[riskIdx] || "").trim()));
-          const valid = vals.filter((v) => Number.isFinite(v));
-          if (valid.length) {
-            const risky = valid.filter((v) => v === 1).length;
-            riskPct = (risky / valid.length) * 100;
-          }
-        }
 
-        const allRows = lines.slice(1).map((l) => {
+        const headers = lines[0].split(",").map((h) => h.trim());
+        allRows = lines.slice(1).map((l) => {
           const cells = l.split(",").map((c) => c.trim());
           const obj = {};
           headers.forEach((h, i) => {
@@ -566,19 +608,25 @@ function MainPage() {
           });
           return obj;
         });
-
-        // CSV идёт в rawExcelData → DataEnrichment → csvData (как Excel)
-        const filtered = filterServiceCols(allRows);
-        setRawExcelData(filtered);
-
-        // Превью из первых 5 строк (без фильтрации служебных для совместимости)
-        setCsvPreview({
-          headers,
-          rows: lines.slice(1, 6).map((l) => l.split(",").map((c) => c.trim())),
-          rowCount: Math.max(lines.length - 1, 0),
-          riskPct,
-        });
       }
+
+      // ========== ОБЩАЯ ОБРАБОТКА ДЛЯ CSV (и для Excel после загрузки листа) ==========
+      // Отправляем в DataEnrichment через rawExcelData
+      setRawExcelData(allRows);
+
+      setCsvPreview({
+        headers: Object.keys(allRows[0] || {}),
+        rows: allRows
+          .slice(0, 5)
+          .map((r) => Object.values(r).map((v) => String(v))),
+        rowCount: allRows.length,
+        riskPct: null,
+      });
+
+      setSheetTypeInfo({
+        group_label: "📊 Данные",
+        detected_group: "numeric",
+      });
     } catch (err) {
       console.error(err);
       setError("Ошибка чтения файла: " + err.message);
@@ -632,7 +680,7 @@ function MainPage() {
 
   return (
     <div className="analysis-layout">
-      <AnalysisSidebar onRun={onRunAnalysis} busy={busy} canRun={canRun} />
+      <AnalysisSidebar onRun={onRunAnalysisAsync} busy={busy} canRun={canRun} />
 
       <div className="analysis-main">
         <div className="card">
@@ -973,6 +1021,18 @@ function MainPage() {
               <button onClick={onTrainAsync} disabled={!csvData || busy}>
                 Обучение модели (Async)
               </button>
+              {analysisTaskId && (
+                <PollingTask
+                  taskId={analysisTaskId}
+                  title="Полный анализ модели"
+                  getStatusFunc={getFullAnalysisStatus}
+                  onStatus={(status) => {
+                    if (status.status === "SUCCESS" && status.result) {
+                      setAnalysisResult(status.result);
+                    }
+                  }}
+                />
+              )}
             </div>
 
             <PollingTask taskId={trainTaskId} title="Обучение модели" />

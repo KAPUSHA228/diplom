@@ -1,17 +1,32 @@
+# === Stage 1: Builder ===
+FROM python:3.11-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip wheel --no-cache-dir --no-deps --wheel-dir /wheels -r requirements.txt
+
+# === Stage 2: Production ===
 FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc g++ && \
-    rm -rf /var/lib/apt/lists/*
-
+# Устанавливаем зависимости
+COPY --from=builder /wheels /wheels
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
+RUN pip install --no-cache-dir --find-links /wheels -r requirements.txt && \
+    rm -rf /wheels
+
+# Копируем весь код
 COPY . .
 
-RUN mkdir -p models logs/drift_reports experiments analysis_data/synthetic analysis_data/monitoring
+# Создаём директории с полными правами (для root)
+RUN mkdir -p logs models experiments analysis_data
 
-# Celery worker слушает очередь Redis
-CMD ["celery", "-A", "celery_app", "worker", "--loglevel=info", "--concurrency=4"]
+# НЕ создаём пользователя celery, НЕ переключаемся
+ENV PYTHONPATH=/app
+
+CMD ["celery", "-A", "celery_app", "worker", "--loglevel=info", "--concurrency=4", "--pool=prefork"]

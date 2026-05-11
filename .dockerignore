@@ -1,0 +1,53 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+/.venv
+*.pkl
+*.log
+ml_core/__pycache__/
+api/__pycache__/
+api/routers/__pycache__/
+
+# Проектные папки
+models/
+logs/
+experiments/
+analysis_data/
+data/
+node_modules/
+/experiments/
+/analysis_data/
+/data/
+
+
+# Фронтенд
+frontend/node_modules
+frontend/.env.example
+frontend/dist/*
+.env.example
+node_modules/.cache/*
+
+# Docker
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+
+# Другое
+.env
+*.md
+.pre-commit-cache/
+/.pre-commit-cache
+htmlcov/
+.coverage
+.aider*
+/models/
