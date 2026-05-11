@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { selectSubset } from "../api";
-import { useSharedData } from "../hooks/useDatasetStore";
+import { useDatasetLoader } from "../hooks/useDatasetLoader";
 
 async function parseFileFull(file) {
   const isExcel = file.name.endsWith(".xlsx") || file.name.endsWith(".xls");
@@ -34,7 +34,7 @@ const MODES = [
 ];
 
 export default function SubsetSelect() {
-  const { data: sharedData, hasShared } = useSharedData();
+  const { data: sharedData, hasShared, loading, hasData } = useDatasetLoader();
   const [file, setFile] = useState(null);
   const [fileData, setFileData] = useState(null);
   const [mode, setMode] = useState("random");
@@ -53,8 +53,6 @@ export default function SubsetSelect() {
       const raw = localStorage.getItem("last_analysis_result");
       const lastAnalysis = raw ? JSON.parse(raw) : null;
       if (lastAnalysis?.cluster_profiles?.size) {
-        // cluster_profiles = { "Признак1": { "0": ..., "1": ... }, "size": { "0": ..., "1": ... } }
-        // Количество кластеров = количество ключей внутри "size"
         const count = Object.keys(lastAnalysis.cluster_profiles.size).length;
         setClusterCount(count);
       }
@@ -63,16 +61,19 @@ export default function SubsetSelect() {
     }
   }, []);
 
-  // Генерируем список доступных кластеров динамически
+  const activeData = fileData || sharedData;
   const availableClusters =
     clusterCount > 0 ? Array.from({ length: clusterCount }, (_, i) => i) : [];
 
-  const activeData = fileData || sharedData;
-
   useEffect(() => {
-    if (hasShared && !fileData)
+    if (hasData && !fileData) {
       setNSamples(Math.min(50, sharedData?.length || 50));
-  }, [hasShared, fileData, sharedData]);
+    }
+  }, [hasData, fileData, sharedData]);
+
+  if (loading) {
+    return <div className="card">⏳ Загрузка данных...</div>;
+  }
 
   async function onFileChange(e) {
     const f = e.target.files?.[0];

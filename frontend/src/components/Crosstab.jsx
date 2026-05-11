@@ -1,17 +1,16 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Plot from "react-plotly.js";
 import { buildCrosstab } from "../api";
 import { parseFile } from "../utils/parseFile";
 import { useSharedData } from "../hooks/useDatasetStore";
 
 export default function Crosstab() {
-  const {
-    data: sharedData,
-    columns: sharedCols,
-    hasShared,
-    isLoading,
-  } = useSharedData();
+  const { loadData, hasShared, isLoading: storeLoading } = useSharedData();
+  const [sharedData, setSharedData] = useState(null);
+  const [sharedCols, setSharedCols] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [fileData, setFileData] = useState(null);
+  const [dataLoaded, setDataLoaded] = useState(false);
   const [rowVar, setRowVar] = useState("");
   const [colVar, setColVar] = useState("");
   const [result, setResult] = useState(null);
@@ -21,6 +20,27 @@ export default function Crosstab() {
   const [binMethod, setBinMethod] = useState("cut");
   const activeData = fileData || sharedData;
   const activeCols = fileData ? Object.keys(fileData[0] || {}) : sharedCols;
+
+  useEffect(() => {
+    const fetchData = async () => {
+      if (dataLoaded) return; // ← не загружаем повторно
+      setIsLoading(true);
+      const data = await loadData();
+      if (data) {
+        setSharedData(data);
+        setSharedCols(data.length > 0 ? Object.keys(data[0]) : []);
+        setDataLoaded(true); // ← отмечаем как загруженное
+      }
+      setIsLoading(false);
+    };
+
+    if (hasShared && !dataLoaded) {
+      fetchData();
+    } else if (!hasShared) {
+      setIsLoading(false);
+    }
+  }, [hasShared, loadData, dataLoaded]);
+
   console.log(
     "[Crosstab] sharedData:",
     sharedData?.length,
@@ -125,7 +145,31 @@ export default function Crosstab() {
       setBusy(false);
     }
   }
+  // Показываем загрузку
+  if (isLoading || storeLoading) {
+    return <div className="card">⏳ Загрузка данных...</div>;
+  }
 
+  // Если нет данных
+  if (!sharedData || sharedData.length === 0) {
+    return (
+      <div className="card">
+        <p className="muted">Нет данных. Загрузите файл на главной странице.</p>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return <div className="card">⏳ Загрузка данных...</div>;
+  }
+
+  if (!hasShared) {
+    return (
+      <div className="card">
+        <p className="muted">Нет данных. Загрузите файл на главной странице.</p>
+      </div>
+    );
+  }
   return (
     <div className="card">
       <h2>📈 Кросс-таблица (χ²-тест)</h2>
@@ -141,8 +185,9 @@ export default function Crosstab() {
               marginBottom: 8,
             }}
           >
-            ✅ Используются данные с главной: <b>{sharedData.length} строк</b>,{" "}
-            {activeCols.length} колонок
+            ✅ Используются данные с главной:{" "}
+            <b>{sharedData?.length ?? 0} строк</b>, {activeCols?.length ?? 0}{" "}
+            колонок
           </div>
         )}
         <input type="file" accept=".csv,.xlsx,.xls" onChange={onFileChange} />

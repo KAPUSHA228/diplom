@@ -144,6 +144,9 @@ async def handle_imputation(request: ImputationRequest):
         from ml_core.imputation import handle_missing_values, detect_outliers
 
         df = pd.DataFrame(request.df)
+        from ml_core.loader import preprocess_sheet
+
+        df, _ = preprocess_sheet(df, sheet_group="numeric")
         df_clean, report = handle_missing_values(df, strategy=request.strategy, threshold=request.threshold)
         outliers = detect_outliers(df_clean)
 

@@ -1,7 +1,7 @@
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 async function request(url, options = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000); // 30 сек
+  const timeout = setTimeout(() => controller.abort(), 300000); // 30 сек
   try {
     const res = await fetch(`${API_BASE}${url}`, {
       ...options,
@@ -12,6 +12,13 @@ async function request(url, options = {}) {
       throw new Error(text || `HTTP ${res.status}`);
     }
     return res.json();
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error(
+        "Request timeout (120 seconds). The analysis may take too long.",
+      );
+    }
+    throw err;
   } finally {
     clearTimeout(timeout);
   }
@@ -272,6 +279,31 @@ export async function trainAsyncJson(data) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ df: data }),
   });
+}
+
+export async function runFullAnalysisAsync(data, params = {}) {
+  return request("/api/v1/ml/full_async", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      df: data,
+      target_col: params.target_col || "risk_flag",
+      n_clusters: params.n_clusters || 3,
+      corr_threshold: params.corr_threshold || 0.3,
+      use_smote: params.use_smote !== undefined ? params.use_smote : true,
+      use_lr: params.use_lr !== undefined ? params.use_lr : true,
+      use_rf: params.use_rf !== undefined ? params.use_rf : true,
+      use_xgb: params.use_xgb !== undefined ? params.use_xgb : true,
+      optimization_metric:
+        params.optimization_metric !== "default"
+          ? params.optimization_metric
+          : null,
+    }),
+  });
+}
+
+export async function getFullAnalysisStatus(taskId) {
+  return request(`/api/v1/ml/full_async/${taskId}`);
 }
 
 // ==================== Дрейф ====================

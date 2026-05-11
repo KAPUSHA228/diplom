@@ -9,7 +9,7 @@ from typing import Dict, Any
 
 from celery_app import app_celery as celery_app
 from ml_core.error_handler import logger
-from workers.tasks import train_model_task, shap_task
+from workers.tasks import train_model_task, shap_task, full_analysis_task
 from ml_core.models import ModelTrainer
 
 from fastapi import APIRouter, HTTPException
@@ -294,6 +294,33 @@ async def select_subset(request: SubsetRequest):
     except Exception as e:
         logger.error(f"Error in select_subset: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router_ml.post("/full_async")
+async def full_analysis_async(request: AnalysisRequest):
+    """Запуск полного анализа в фоне через Celery."""
+    task = full_analysis_task.delay(request.df, request.dict())
+    return {"task_id": task.id, "status": "started"}
+
+
+@router_ml.get("/full_async/{task_id}")
+async def get_full_analysis_status(task_id: str):
+    """Статус фонового анализа."""
+    from celery.result import AsyncResult
+    from celery_app import app_celery
+
+    result = AsyncResult(task_id, app=app_celery)
+
+    response = {"task_id": task_id, "status": result.status}
+
+    if result.status == "SUCCESS":
+        response["result"] = result.result.get("result")
+    elif result.status == "FAILURE":
+        response["error"] = str(result.result)
+    elif result.status == "PROGRESS":
+        response.update(result.result or {})
+
+    return response
 
 
 app.include_router(router_ml)

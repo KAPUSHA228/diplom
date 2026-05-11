@@ -2,10 +2,16 @@ import { useState, useEffect, useMemo } from "react";
 import Plot from "react-plotly.js";
 import { createCompositeScore } from "../api";
 import { parseFile } from "../utils/parseFile";
-import { useSharedData } from "../hooks/useDatasetStore";
+import { useDatasetLoader } from "../hooks/useDatasetLoader";
 
 export default function CompositeScore() {
-  const { data: sharedData, hasShared, updateData } = useSharedData();
+  const {
+    data: sharedData,
+    loading,
+    hasData,
+    hasShared,
+    updateData,
+  } = useDatasetLoader();
   const [file, setFile] = useState(null);
   const [fileData, setFileData] = useState(null);
   const [weights, setWeights] = useState({});
@@ -25,15 +31,17 @@ export default function CompositeScore() {
 
   useEffect(() => {
     // Инициализируем веса нулями
-    if (hasShared && !fileData && Object.keys(weights).length === 0) {
+    if (hasData && !fileData && Object.keys(weights).length === 0) {
       const w = {};
       numericCols.forEach((c) => {
         w[c] = 0;
       });
       setWeights(w);
     }
-  }, [hasShared, fileData, numericCols, weights]);
-
+  }, [hasData, fileData, numericCols, weights]);
+  if (loading) {
+    return <div className="card">⏳ Загрузка данных...</div>;
+  }
   async function onFileChange(e) {
     const f = e.target.files?.[0];
     if (!f) return;

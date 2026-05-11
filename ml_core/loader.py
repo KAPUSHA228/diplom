@@ -7,6 +7,30 @@ import pandas as pd
 
 from ml_core.error_handler import logger
 
+# Служебные колонки (PII) — исключаем из превью полностью (и колонку, и данные)
+# Все в нижнем регистре для сравнения с col.strip().lower()
+SERVICE_COLS = {
+    "user",
+    "user_id",
+    "vk_id",
+    "vk id",
+    "vk",
+    "фамилия",
+    "имя",
+    "отчество",
+    "вуз",
+    "факультет",
+    "группа",
+    "курс",
+    "пол",
+    "возраст",
+    "дата",
+    "date",
+    "направление подготовки",
+    "_source_sheet",
+    "_sheet_type",
+}
+
 SHEET_TYPE_PATTERNS = {
     "category1_numeric": {
         "keywords": [
@@ -220,30 +244,6 @@ def get_sheet_preview(file_path: str, sheet_name: str) -> dict:
             else:
                 group = "numeric"
 
-    # Служебные колонки (PII) — исключаем из превью полностью (и колонку, и данные)
-    # Все в нижнем регистре для сравнения с col.strip().lower()
-    SERVICE_COLS = {
-        "user",
-        "user_id",
-        "vk_id",
-        "vk id",
-        "vk",
-        "фамилия",
-        "имя",
-        "отчество",
-        "вуз",
-        "факультет",
-        "группа",
-        "курс",
-        "пол",
-        "возраст",
-        "дата",
-        "date",
-        "направление подготовки",
-        "_source_sheet",
-        "_sheet_type",
-    }
-
     cols_info = []
     for col in df.columns:
         col_clean = col.strip().lower()
@@ -418,17 +418,11 @@ def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None,
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # === 3. Удаление служебных колонок ===
-    service_cols = [
-        col
-        for col in df.columns
-        if str(col).strip().lower()
-        in {"user", "user_id", "vk_id", "vk", "фамилия", "имя", "отчество", "вуз", "факультет"}
-    ]
+    service_cols = [col for col in df.columns if str(col).strip().lower() in SERVICE_COLS]
     if service_cols:
         df = df.drop(columns=service_cols)
     # === 4. Гарантируем наличие идентификатора студента ===
     if "student_id" not in df.columns:
-        # Если совсем нет — создаём синтетический
         df["student_id"] = [f"student_{i:06d}" for i in range(len(df))]
 
     # Перемещаем student_id в начало для удобства

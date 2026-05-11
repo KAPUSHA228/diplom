@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { handleImputation } from "../api";
 import { parseFile } from "../utils/parseFile";
-import { useSharedData } from "../hooks/useDatasetStore";
+import { useDatasetLoader } from "../hooks/useDatasetLoader";
 
 const STRATEGIES = [
   { value: "auto", label: "🤖 Авто" },
@@ -12,7 +12,12 @@ const STRATEGIES = [
 ];
 
 export default function Imputation() {
-  const { data: sharedData, columns: sharedCols, hasShared } = useSharedData();
+  const {
+    data: sharedData,
+    columns: sharedCols,
+    hasShared,
+    loading,
+  } = useDatasetLoader();
   const [file, setFile] = useState(null);
   const [fileData, setFileData] = useState(null);
   const [strategy, setStrategy] = useState("auto");
@@ -21,7 +26,9 @@ export default function Imputation() {
   const [busy, setBusy] = useState(false);
 
   const activeData = fileData || sharedData;
-
+  if (loading) {
+    return <div className="card">⏳ Загрузка данных...</div>;
+  }
   async function onFileChange(e) {
     const f = e.target.files?.[0];
     if (!f) return;

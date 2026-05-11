@@ -76,6 +76,9 @@ class ResearchAnalyzer:
 
             df = safe_execute(add_composite_features, df)
             all_features = get_base_features(df, is_synthetic=is_synthetic)
+            if target_col in all_features:
+                print(f"[WARNING] Target column {target_col} is in features! Removing...")
+                all_features.remove(target_col)
 
             corr_result = safe_execute(
                 correlation_analysis, df, all_features, target_col, corr_threshold=corr_threshold

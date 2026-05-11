@@ -3,6 +3,10 @@
 """
 
 import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import pandas as pd
 from celery_app import app_celery
 from ml_core.features import add_composite_features, get_base_features, preprocess_data_for_smote
@@ -141,3 +145,48 @@ def shap_task(self, model_id: str, data_path: str, threshold: float = 0.5):
         raise
     finally:
         _cleanup(data_path)
+
+
+@app_celery.task(bind=True, name="workers.tasks.full_analysis_task")
+def full_analysis_task(self, data: list, params: dict):
+    """
+    Асинхронный полный анализ (ML + SHAP + графики).
+    """
+    self.update_state(state="PROGRESS", meta={"stage": "loading_data", "progress": 10})
+
+    try:
+        import pandas as pd
+        from ml_core.analyzer import ResearchAnalyzer
+
+        df = pd.DataFrame(data)
+
+        self.update_state(state="PROGRESS", meta={"stage": "analysis", "progress": 30})
+
+        analyzer = ResearchAnalyzer()
+        result = analyzer.run_full_analysis(
+            df=df,
+            target_col=params.get("target_col", "risk_flag"),
+            n_clusters=params.get("n_clusters", 3),
+            corr_threshold=params.get("corr_threshold", 0.3),
+            use_smote=params.get("use_smote", True),
+            use_lr=params.get("use_lr", True),
+            use_rf=params.get("use_rf", True),
+            use_xgb=params.get("use_xgb", True),
+            optimization_metric=params.get("optimization_metric"),
+        )
+
+        # Сериализуем результат (очищаем от numpy типов)
+        from shared.utils import safe_json_serializable
+
+        serialized_result = safe_json_serializable(result.__dict__)
+
+        self.update_state(state="PROGRESS", meta={"stage": "complete", "progress": 100})
+
+        return {
+            "status": "success",
+            "result": serialized_result,
+        }
+
+    except Exception as e:
+        logger.error(f"Full analysis failed: {e}")
+        raise

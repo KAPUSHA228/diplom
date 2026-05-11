@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { createFeatureCombinations } from "../api";
-import { useSharedData } from "../hooks/useDatasetStore";
+import { useDatasetLoader } from "../hooks/useDatasetLoader";
 
 async function parseFileFull(file) {
   const isExcel = file.name.endsWith(".xlsx") || file.name.endsWith(".xls");
@@ -28,7 +28,12 @@ async function parseFileFull(file) {
 }
 
 export default function FeatureCombinations() {
-  const { data: sharedData, hasShared, updateData } = useSharedData();
+  const {
+    data: sharedData,
+    hasShared,
+    loading,
+    updateData,
+  } = useDatasetLoader();
   const [file, setFile] = useState(null);
   const [fileData, setFileData] = useState(null);
   const [numericalCols, setNumericalCols] = useState([]);
@@ -65,6 +70,9 @@ export default function FeatureCombinations() {
     }
   }, [activeData]);
 
+  if (loading) {
+    return <div className="card">⏳ Загрузка данных...</div>;
+  }
   async function onFileChange(e) {
     const f = e.target.files?.[0];
     if (!f) return;

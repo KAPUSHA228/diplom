@@ -1,15 +1,15 @@
 import { useState, useEffect, useMemo } from "react";
 import Plot from "react-plotly.js";
 import { getTrajectory, findNegativeDynamics, forecastStudent } from "../api";
-import { useSharedData } from "../hooks/useDatasetStore";
+import { useDatasetLoader } from "../hooks/useDatasetLoader";
 
 export default function TimeSeries() {
   const {
     data: sharedData,
     columns: sharedCols,
-    hasShared,
-    isLoading,
-  } = useSharedData();
+    hasData,
+    loading,
+  } = useDatasetLoader();
 
   // Режимы анализа
   const [mode, setMode] = useState("individual");
@@ -73,8 +73,11 @@ export default function TimeSeries() {
     }
   }, [safeCols, timeCol]);
 
+  if (loading) {
+    return <div className="card">⏳ Загрузка данных...</div>;
+  }
   // Показываем индикатор загрузки
-  if (isLoading) {
+  if (loading) {
     return (
       <div className="card">
         <p>⏳ Загрузка данных...</p>
@@ -83,7 +86,7 @@ export default function TimeSeries() {
   }
 
   // Если нет данных
-  if (!hasShared) {
+  if (!hasData) {
     return (
       <div className="card">
         <p className="muted">Нет данных. Загрузите файл на главной странице.</p>
@@ -148,7 +151,7 @@ export default function TimeSeries() {
     }
   }
 
-  if (hasShared && students.length > 0) {
+  if (hasData && students.length > 0) {
     const avgRowsPerStudent = safeData.length / students.length;
     if (avgRowsPerStudent < 2.5) {
       return (
@@ -182,7 +185,7 @@ export default function TimeSeries() {
     <div className="card">
       <h2>📉 Временные ряды и траектории студентов</h2>
 
-      {hasShared && (
+      {hasData && (
         <div className="ok" style={{ marginBottom: 16 }}>
           Анализируется <b>{safeData.length}</b> записей • Числовых показателей:{" "}
           <b>{numericCols.length}</b>

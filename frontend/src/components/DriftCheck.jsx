@@ -2,10 +2,10 @@ import { useState, useEffect } from "react";
 import Plot from "react-plotly.js";
 import { checkDrift, getMetricsHistory } from "../api";
 import { parseFile } from "../utils/parseFile";
-import { useSharedData } from "../hooks/useDatasetStore";
+import { useDatasetLoader } from "../hooks/useDatasetLoader";
 
 export default function DriftCheck() {
-  const { data: sharedData, hasShared } = useSharedData();
+  const { data: sharedData, hasShared, loading, hasData } = useDatasetLoader();
   const [refFile, setRefFile] = useState(null);
   const [refData, setRefData] = useState(null);
   const [curFile, setCurFile] = useState(null);
@@ -13,8 +13,6 @@ export default function DriftCheck() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-
-  // История метрик
   const [metrics, setMetrics] = useState([]);
 
   useEffect(() => {
@@ -23,10 +21,15 @@ export default function DriftCheck() {
       .catch(() => {});
   }, []);
 
-  // Shared data как референс по умолчанию
   useEffect(() => {
-    if (hasShared && !refData) setRefData(sharedData);
-  }, [hasShared, sharedData, refData]);
+    if (hasData && !refData && !refFile) {
+      setRefData(sharedData);
+    }
+  }, [hasData, sharedData, refData, refFile]);
+
+  if (loading) {
+    return <div className="card">⏳ Загрузка данных...</div>;
+  }
 
   async function onRefChange(e) {
     const f = e.target.files?.[0];
