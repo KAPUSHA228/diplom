@@ -13,6 +13,7 @@ from ml_core.features import add_composite_features, get_base_features, preproce
 from ml_core.models import ModelTrainer
 from ml_core.evaluation import generate_shap_explanations
 from ml_core.error_handler import logger
+from celery import current_task
 
 
 def _cleanup(path):
@@ -152,35 +153,46 @@ def full_analysis_task(self, data: list, params: dict):
     """
     Асинхронный полный анализ (ML + SHAP + графики).
     """
-    self.update_state(state="PROGRESS", meta={"stage": "loading_data", "progress": 10})
+
+    def report_progress(stage, progress):
+        print(f"🔵🔵🔵 REPORT_PROGRESS CALLED: {stage} - {progress}%")
+        self.update_state(state="PROGRESS", meta={"stage": stage, "progress": progress})
 
     try:
-        import pandas as pd
-        from ml_core.analyzer import ResearchAnalyzer
+        # ПРОВЕРКА 1: Вызываем report_progress ДО анализа
+        report_progress("НАЧАЛО АНАЛИЗА (тест)", 1)
 
         df = pd.DataFrame(data)
 
-        self.update_state(state="PROGRESS", meta={"stage": "analysis", "progress": 30})
+        # ПРОВЕРКА 2: Ещё один вызов
+        report_progress("ЗАГРУЗКА ДАННЫХ (тест)", 5)
+
+        from ml_core.analyzer import ResearchAnalyzer
 
         analyzer = ResearchAnalyzer()
+
+        # ПРОВЕРКА 3: Перед вызовом основного метода
+        report_progress("ЗАПУСК АНАЛИЗАТОРА (тест)", 10)
         result = analyzer.run_full_analysis(
             df=df,
             target_col=params.get("target_col", "risk_flag"),
             n_clusters=params.get("n_clusters", 3),
+            risk_threshold=params.get("risk_threshold", 0.5),
             corr_threshold=params.get("corr_threshold", 0.3),
+            is_synthetic=params.get("is_synthetic", False),
             use_smote=params.get("use_smote", True),
             use_lr=params.get("use_lr", True),
             use_rf=params.get("use_rf", True),
             use_xgb=params.get("use_xgb", True),
-            optimization_metric=params.get("optimization_metric"),
+            optimization_metric=params.get("optimization_metric", None),
+            progress_callback=report_progress,
         )
 
         # Сериализуем результат (очищаем от numpy типов)
         from shared.utils import safe_json_serializable
 
+        report_progress("АНАЛИЗ ЗАВЕРШЁН (тест)", 100)
         serialized_result = safe_json_serializable(result.__dict__)
-
-        self.update_state(state="PROGRESS", meta={"stage": "complete", "progress": 100})
 
         return {
             "status": "success",
@@ -188,5 +200,7 @@ def full_analysis_task(self, data: list, params: dict):
         }
 
     except Exception as e:
-        logger.error(f"Full analysis failed: {e}")
+        current_task.update_state(
+            state="FAILURE", meta={"stage": f"❌ Ошибка: {str(e)}", "progress": 0, "error": str(e)}
+        )
         raise

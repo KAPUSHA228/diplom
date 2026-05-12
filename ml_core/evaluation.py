@@ -21,7 +21,6 @@ from sklearn.metrics import (
 import shap
 import matplotlib.pyplot as plt
 
-import seaborn as sns
 
 from ml_core.error_handler import logger
 
@@ -363,38 +362,6 @@ def generate_batch_explanations(model, X_explain, feature_names, threshold=0.5, 
 
 
 # ---- Визуализация метрик и важности признаков ----
-
-
-def plot_confusion(model, X_test, y_test, name="model", output_path=None):
-    """
-    Строит confusion matrix через matplotlib и сохраняет в PNG.
-
-    Args:
-        model: обученная модель
-        X_test: тестовые признаки
-        y_test: истинные метки
-        name: имя модели (для имени файла)
-        output_path: путь сохранения (по умолчанию: logs/cm_{name}.png)
-
-    Returns:
-        ndarray: матрица ошибок
-    """
-    preds = model.predict(X_test)
-    cm = confusion_matrix(y_test, preds)
-    if output_path is None:
-        output_path = config.LOGS_DIR / f"cm_{name}.png"
-    if sns is not None:
-        plt.figure(figsize=(4, 4))
-        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
-        plt.xlabel("Predicted")
-        plt.ylabel("True")
-        plt.title(f"Confusion matrix: {name}")
-        plt.tight_layout()
-        plt.savefig(output_path, dpi=200)
-        plt.close()
-    return cm
-
-
 def plot_feature_importance_png(model, feature_names, name="model", output_path=None, top_n=10):
     """
     Строит горизонтальную bar chart важности признаков (matplotlib).

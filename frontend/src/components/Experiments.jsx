@@ -146,22 +146,29 @@ export default function Experiments() {
                 }}
               >
                 {detail.metrics &&
-                  Object.entries(detail.metrics).map(([k, v]) => (
-                    <div
-                      key={k}
-                      style={{
-                        textAlign: "center",
-                        padding: "4px",
-                        background: "var(--bg)",
-                        borderRadius: 4,
-                      }}
-                    >
-                      <div style={{ fontSize: 10 }}>{k}</div>
-                      <div style={{ fontWeight: "bold" }}>
-                        {typeof v === "number" ? v.toFixed(3) : v}
+                  Object.entries(detail.metrics).map(([k, v]) => {
+                    if (typeof v === "object" && v !== null) {
+                      return null; // или покажи свёрнуто
+                    }
+                    return (
+                      <div
+                        key={k}
+                        style={{
+                          textAlign: "center",
+                          padding: "4px",
+                          background: "var(--bg)",
+                          borderRadius: 4,
+                        }}
+                      >
+                        <div style={{ fontSize: 10 }}>{k}</div>
+                        <div style={{ fontWeight: "bold" }}>
+                          {typeof v === "number"
+                            ? v.toFixed(3)
+                            : JSON.stringify(v)}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
               </div>
             </div>
 

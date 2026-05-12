@@ -24,11 +24,14 @@ from .schemas import (
     SubsetRequest,
     CompositeRequest,
 )
+from datetime import datetime, timedelta
 from shared.utils import safe_json_serializable
 from shared.utils import scrub
+from api.ml_service.websocket import router as websocket_router
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
-
+_task_cache = {}
+CACHE_TTL = 3600
 
 app = FastAPI(title="ML Service", description="ML модели и обучение", version="1.0.0")
 # Два роутера: не переиспользовать одну переменную — иначе теряются маршруты первого префикса.
@@ -37,6 +40,13 @@ router_analyze_ml = APIRouter(prefix="/api/v1/analyze")
 
 # Инициализация трейнера
 trainer = ModelTrainer()
+
+
+def clean_expired_cache():
+    now = datetime.now()
+    expired = [tid for tid, (_, ts) in _task_cache.items() if now - ts > timedelta(seconds=CACHE_TTL)]
+    for tid in expired:
+        del _task_cache[tid]
 
 
 @router_ml.post("/train_async")
@@ -309,23 +319,38 @@ async def get_full_analysis_status(task_id: str):
     from celery.result import AsyncResult
     from celery_app import app_celery
 
-    result = AsyncResult(task_id, app=app_celery)
+    # Проверяем кэш
+    if task_id in _task_cache:
+        result, timestamp = _task_cache[task_id]
+        # Возвращаем результат с заголовком, что это из кэша
 
+        return {"task_id": task_id, "status": "SUCCESS", "result": result, "_cached": True}
+
+    result = AsyncResult(task_id, app=app_celery)
+    print(f"🔵 STATUS CHECK: task_id={task_id}, status={result.status}")
     response = {"task_id": task_id, "status": result.status}
 
     if result.status == "SUCCESS":
         response["result"] = result.result.get("result")
+        # Сохраняем в кэш для быстрых повторных запросов
+        _task_cache[task_id] = (response["result"], datetime.now())
+        # Очищаем старые записи
+        clean_expired_cache()
+
     elif result.status == "FAILURE":
         response["error"] = str(result.result)
-    elif result.status == "PROGRESS":
-        response.update(result.result or {})
 
+    elif result.status == "PROGRESS":
+        meta = result.result or {}
+        print(f"🔵 PROGRESS META: {meta}")
+        response["stage"] = meta.get("stage", "Выполняется...")
+        response["progress"] = meta.get("progress", 0)
     return response
 
 
 app.include_router(router_ml)
 app.include_router(router_analyze_ml)
-
+app.include_router(websocket_router)
 
 if __name__ == "__main__":
     import uvicorn

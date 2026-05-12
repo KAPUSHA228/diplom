@@ -1,3 +1,4 @@
+import time
 from typing import Optional, Dict, Any
 import pandas as pd
 from .config import config
@@ -35,6 +36,7 @@ class ResearchAnalyzer:
         use_rf: bool = True,
         use_xgb: bool = True,
         optimization_metric: Optional[str] = None,
+        progress_callback=None,
     ) -> AnalysisResult:
         """
         Полный пайплайн АРМ исследователя: текст → композиты → корреляция →
@@ -52,9 +54,19 @@ class ResearchAnalyzer:
         Returns:
             AnalysisResult: полный результат анализа
         """
+
+        def report(stage, progress):
+            print(f"🔵 REPORT CALLED: stage={stage}, progress={progress}")  # ← отладочный вывод
+            if progress_callback:
+                print(f"🔵 CALLING CALLBACK: {stage} - {progress}%")  # ← отладочный вывод
+                progress_callback(stage, progress)
+            logger.info(f"[PROGRESS] {stage}: {progress}%")
+            time.sleep(0.05)
+
         try:
             df = df.copy()
 
+            report("Проверка целевой переменной", 5)
             # Проверяем наличие целевой колонки
             if target_col not in df.columns:
                 # Ищем похожую (risk, target, flag, class)
@@ -74,12 +86,16 @@ class ResearchAnalyzer:
             if "essay_text" in df.columns:
                 df = extract_text_features(df, "essay_text")
 
+            report("Создание композитных признаков", 10)
             df = safe_execute(add_composite_features, df)
+
+            report("Определение признаков", 15)
             all_features = get_base_features(df, is_synthetic=is_synthetic)
             if target_col in all_features:
                 print(f"[WARNING] Target column {target_col} is in features! Removing...")
                 all_features.remove(target_col)
 
+            report("Корреляционный анализ", 20)
             corr_result = safe_execute(
                 correlation_analysis, df, all_features, target_col, corr_threshold=corr_threshold
             )
@@ -99,6 +115,7 @@ class ResearchAnalyzer:
             else:
                 print("DEBUG corr: corr_result is None")
 
+            report("Кластеризация студентов", 30)
             cluster_labels, _, _ = safe_execute(cluster_students, df, n_clusters=n_clusters, feature_cols=all_features)
             df = df.copy()
             # Перед вызовом кластеризации
@@ -118,6 +135,7 @@ class ResearchAnalyzer:
                 logger.error(f"Ошибка при создании графика кластеров: {e}")
             # ==================================
 
+            report("Разделение на train/test", 40)
             # === Train / Test сплит ===
             # X = df[all_features].fillna(df[all_features].median(numeric_only=True))
             X = df[all_features]
@@ -126,8 +144,10 @@ class ResearchAnalyzer:
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
             if use_smote:
+                report("Балансировка классов (SMOTE)", 45)
                 X_train, y_train = preprocess_data_for_smote(X_train, y_train)  # новая функция
 
+            report("Выбор лучшей модели", 50)
             # === УЧИТЫВАЕМ НАСТРОЙКИ САЙДБАРА (какие модели включены) ===
             active_models = {}
             if use_lr:
@@ -146,6 +166,7 @@ class ResearchAnalyzer:
             self.trainer.models = active_models
             # ==========================================================
 
+            report("Обучение моделей", 60)
             model, model_name, metrics = self.trainer.train_best_model(
                 X_train, y_train, X_test, y_test, scoring=optimization_metric
             )
@@ -155,6 +176,7 @@ class ResearchAnalyzer:
             # ==========================================================
 
             # SHAP
+            report("SHAP объяснения", 80)
             explanations = safe_execute(
                 generate_shap_explanations,
                 model,
@@ -175,6 +197,7 @@ class ResearchAnalyzer:
 
             # === ГЕНЕРАЦИЯ ГРАФИКОВ (с отладкой) ===
             try:
+                report("Построение графиков", 90)
                 print("DEBUG: Начинаю создание графиков...")
 
                 # 1. Confusion Matrix
@@ -238,7 +261,7 @@ class ResearchAnalyzer:
                 df_with_clusters["cluster"] = cluster_labels
 
             self.last_df = df_with_clusters
-
+            report("Завершение", 100)
             # Добавляем в результат
             return AnalysisResult(
                 metrics=metrics,

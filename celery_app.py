@@ -28,4 +28,12 @@ app_celery.conf.update(
     enable_utc=True,
     # Настройки для Windows (пул потоков вместо форков)
     worker_pool="solo",
+    task_track_started=True,
+    task_time_limit=30 * 60,
+    task_soft_time_limit=25 * 60,
+    result_expires=3600,
+    # 🔥 Ключевые настройки для частых обновлений
+    task_ignore_result=False,
+    result_backend="redis://localhost:6379/0",
+    result_persistent=True,  # сохранять результаты даже после перезапуска
 )

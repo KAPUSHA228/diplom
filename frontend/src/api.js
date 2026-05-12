@@ -1,7 +1,21 @@
 const API_BASE = import.meta.env.VITE_API_BASE || "";
+
+const pendingRequests = new Map();
+
 async function request(url, options = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 300000); // 30 сек
+  const timeout = setTimeout(() => controller.abort(), 300000);
+
+  // Только для НЕ polling запросов
+  const cancelKey = options.cancelKey || (options.noCancel ? null : url);
+
+  if (cancelKey && pendingRequests.has(cancelKey)) {
+    pendingRequests.get(cancelKey).abort();
+  }
+  if (cancelKey) {
+    pendingRequests.set(cancelKey, controller);
+  }
+
   try {
     const res = await fetch(`${API_BASE}${url}`, {
       ...options,
@@ -14,24 +28,201 @@ async function request(url, options = {}) {
     return res.json();
   } catch (err) {
     if (err.name === "AbortError") {
-      throw new Error(
-        "Request timeout (120 seconds). The analysis may take too long.",
-      );
+      throw new Error("Request was cancelled");
     }
     throw err;
   } finally {
     clearTimeout(timeout);
+    if (cancelKey) {
+      pendingRequests.delete(cancelKey);
+    }
+  }
+}
+
+//class WebSocketManager {
+//  constructor() {
+//    this.connections = new Map(); // taskId -> { ws, listeners }
+//    this.reconnectAttempts = new Map();
+//    this.maxReconnectAttempts = 3;
+//  }
+//
+//  connect(taskId, onMessage, onError, onClose) {
+//    // Если уже есть соединение для этого taskId — не создаём новое
+//    if (this.connections.has(taskId)) {
+//      const existing = this.connections.get(taskId);
+//      existing.listeners.push({ onMessage, onError, onClose });
+//      return () => this.disconnect(taskId, existing.listeners.length - 1);
+//    }
+//
+//    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+//    const wsUrl = `${protocol}//${window.location.host}/api/v1/ml/ws/task/${taskId}`;
+//    const ws = new WebSocket(wsUrl);
+//
+//    const listeners = [{ onMessage, onError, onClose }];
+//
+//    ws.onopen = () => {
+//      console.log(`[WebSocket] Connected to task ${taskId}`);
+//      this.reconnectAttempts.delete(taskId);
+//    };
+//
+//    ws.onmessage = (event) => {
+//      const data = JSON.parse(event.data);
+//      listeners.forEach((l) => l.onMessage?.(data));
+//    };
+//
+//    ws.onerror = (err) => {
+//      console.error(`[WebSocket] Error for task ${taskId}:`, err);
+//      listeners.forEach((l) => l.onError?.(err));
+//    };
+//
+//    ws.onclose = () => {
+//      console.log(`[WebSocket] Closed for task ${taskId}`);
+//
+//      // Попытка переподключения
+//      const attempts = this.reconnectAttempts.get(taskId) || 0;
+//      if (attempts < this.maxReconnectAttempts) {
+//        this.reconnectAttempts.set(taskId, attempts + 1);
+//        setTimeout(
+//          () => {
+//            if (this.connections.has(taskId)) {
+//              this.connect(taskId, onMessage, onError, onClose);
+//            }
+//          },
+//          1000 * (attempts + 1),
+//        );
+//      } else {
+//        listeners.forEach((l) => l.onClose?.());
+//        this.connections.delete(taskId);
+//        this.reconnectAttempts.delete(taskId);
+//      }
+//    };
+//
+//    this.connections.set(taskId, { ws, listeners });
+//
+//    // Возвращаем функцию отписки
+//    return () => this.disconnect(taskId, listeners.length - 1);
+//  }
+//
+//  disconnect(taskId, listenerIndex = null) {
+//    const conn = this.connections.get(taskId);
+//    if (!conn) return;
+//
+//    if (listenerIndex !== null) {
+//      // Удаляем только одного слушателя
+//      conn.listeners.splice(listenerIndex, 1);
+//      if (conn.listeners.length > 0) return;
+//    }
+//
+//    // Закрываем соединение, если слушателей не осталось
+//    conn.ws.close();
+//    this.connections.delete(taskId);
+//    this.reconnectAttempts.delete(taskId);
+//  }
+//
+//  send(taskId, data) {
+//    const conn = this.connections.get(taskId);
+//    if (conn && conn.ws.readyState === WebSocket.OPEN) {
+//      conn.ws.send(JSON.stringify(data));
+//    }
+//  }
+//}
+//
+//export const wsManager = new WebSocketManager();
+//
+//class PollingClient {
+//    constructor() {
+//        this.activePolling = new Map();
+//    }
+//
+//    poll(taskId, onUpdate, options = {}) {
+//        const { intervalMs = 3000, maxAttempts = 200 } = options;
+//
+//        // Если уже есть активный polling для этого taskId — не создаём новый
+//        if (this.activePolling.has(taskId)) {
+//            console.warn(`[PollingClient] Already polling task ${taskId}`);
+//            // ВОЗВРАЩАЕМ ФУНКЦИЮ, А НЕ undefined
+//            return () => {};
+//        }
+//
+//        let attempts = 0;
+//        let isActive = true;
+//        let timeoutId = null;
+//
+//        const stop = () => {
+//            console.log(`[PollingClient] Stopping polling for task ${taskId}`);
+//            isActive = false;
+//            if (timeoutId) {
+//                clearTimeout(timeoutId);
+//                timeoutId = null;
+//            }
+//            this.activePolling.delete(taskId);
+//        };
+//
+//        this.activePolling.set(taskId, { stop });
+//
+//        const pollOnce = async () => {
+//            if (!isActive) return;
+//
+//            try {
+//                const response = await fetch(`${API_BASE}/api/v1/ml/full_async/${taskId}`);
+//                const data = await response.json();
+//
+//                if (!isActive) return;
+//
+//                if (onUpdate) {
+//                    onUpdate(data);
+//                }
+//                attempts++;
+//
+//                if (data.status === 'SUCCESS' || data.status === 'FAILURE' || attempts >= maxAttempts) {
+//                    stop();
+//                    return;
+//                }
+//
+//                const delay = Math.min(intervalMs * Math.pow(1.2, Math.floor(attempts / 10)), 15000);
+//                timeoutId = setTimeout(pollOnce, delay);
+//
+//            } catch (err) {
+//                console.error(`[PollingClient] Error polling task ${taskId}:`, err);
+//                if (isActive) {
+//                    timeoutId = setTimeout(pollOnce, 5000);
+//                }
+//            }
+//        };
+//
+//        pollOnce();
+//        return stop;  // ← ВАЖНО: возвращаем функцию stop
+//    }
+//
+//    stop(taskId) {
+//        const polling = this.activePolling.get(taskId);
+//        if (polling && polling.stop) {
+//            polling.stop();
+//        }
+//    }
+//}
+//
+//export const pollingClient = new PollingClient();
+
+// Специальная функция для отмены всех запросов к задаче
+export function cancelTaskPolling(taskId) {
+  const key = `/api/v1/ml/full_async/${taskId}`;
+  if (pendingRequests.has(key)) {
+    pendingRequests.get(key).abort();
+    pendingRequests.delete(key);
   }
 }
 
 export async function healthcheck() {
   return request("/health");
 }
+
 export async function uploadForTrain(file) {
   const form = new FormData();
   form.append("file", file);
   return request("/api/v1/ml/train", { method: "POST", body: form });
 }
+
 export async function uploadForShap(file, modelId = "XGB") {
   const form = new FormData();
   form.append("file", file);
