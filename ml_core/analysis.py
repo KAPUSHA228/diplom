@@ -1,6 +1,5 @@
 """
 Модуль для анализа данных (кластеризация, корреляция)
-ВАША ЗОНА ОТВЕТСТВЕННОСТИ
 """
 
 import plotly.express as px
@@ -8,7 +7,6 @@ import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
 import pandas as pd
 from ml_core.error_handler import logger
 from ml_core.config import config  # общая утилита
@@ -168,35 +166,6 @@ def plot_clusters_pca(df, labels, features):
     )
 
     return fig
-
-
-def plot_clusters_2d(X, cluster_labels, output_path="clusters_2d.png"):
-    """
-    Визуализирует кластеры в 2D через PCA и сохраняет в PNG (matplotlib).
-
-    Args:
-        X: матрица признаков (ndarray или DataFrame)
-        cluster_labels: метки кластеров
-        output_path: путь сохранения (по умолчанию "clusters_2d.png")
-
-    Returns:
-        sklearn.decomposition.PCA: обученная PCA-модель
-    """
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    pca = PCA(n_components=2, random_state=42)
-    X_pca = pca.fit_transform(X_scaled)
-
-    plt.figure(figsize=(8, 6))
-    scatter = plt.scatter(X_pca[:, 0], X_pca[:, 1], c=cluster_labels, cmap="viridis", alpha=0.6)
-    plt.colorbar(scatter, label="Кластер")
-    plt.xlabel(f"PC1 ({pca.explained_variance_ratio_[0]:.2%} variance)")
-    plt.ylabel(f"PC2 ({pca.explained_variance_ratio_[1]:.2%} variance)")
-    plt.title("Кластеризация студентов (PCA проекция)")
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=200)
-    plt.close()
-    return pca
 
 
 def plot_corr_heatmap(corr_df, title="Корреляционная матрица"):

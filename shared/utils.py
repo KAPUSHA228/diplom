@@ -10,6 +10,7 @@ def scrub(obj: Any) -> Any:
     """Рекурсивная очистка от nan/inf/numpy для JSON."""
     if obj is None:
         return None
+    print(f"🔵 scrub input type: {type(obj)}")
     if isinstance(obj, np.ndarray):
         return scrub(obj.tolist())
     if isinstance(obj, (np.floating, np.float64)):
@@ -20,7 +21,10 @@ def scrub(obj: Any) -> Any:
     if isinstance(obj, np.bool_):
         return bool(obj)
     if isinstance(obj, dict):
-        return {k: scrub(v) for k, v in obj.items()}
+        print(f"🔵 scrub keys before: {list(obj.keys())}")
+        result = {k: scrub(v) for k, v in obj.items() if v is not None}
+        print(f"🔵 scrub keys after: {list(result.keys())}")
+        return result
     if isinstance(obj, list):
         return [scrub(v) for v in obj]
     if isinstance(obj, float) and (np.isnan(obj) or np.isinf(obj)):

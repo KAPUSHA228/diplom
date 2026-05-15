@@ -1,6 +1,5 @@
 """
 Модуль для оценки моделей и объяснения предсказаний
-ВАША ЗОНА ОТВЕТСТВЕННОСТИ
 """
 
 import plotly.graph_objects as go
@@ -20,7 +19,6 @@ from sklearn.metrics import (
 )
 import shap
 import matplotlib.pyplot as plt
-
 
 from ml_core.error_handler import logger
 

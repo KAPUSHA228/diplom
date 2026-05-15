@@ -4,6 +4,7 @@
 """
 
 import pandas as pd
+from ml_core.config import optimize_dtypes
 
 from ml_core.error_handler import logger
 
@@ -31,104 +32,88 @@ SERVICE_COLS = {
     "_sheet_type",
 }
 
+SHEET_CATEGORY_MAP = {
+    # Психометрические тесты
+    "вильямс ": "numeric",
+    "шварц": "numeric",
+    "триандис": "numeric",
+    # Креативность / эссе
+    "медник": "skip",
+    # Социологические опросы (single_choice)
+    "соц1": "single_choice",
+    "соц2": "single_choice",
+    "соц3": "single_choice",
+    "соц4": "single_choice",
+    "соц5": "single_choice",
+    "соц6": "single_choice",
+    "соц8": "single_choice",
+    "соц9": "single_choice",
+    "соц11": "single_choice",
+    "соц12": "single_choice",
+    "соц13": "single_choice",
+    "соц14": "single_choice",
+    "соц15": "single_choice",
+    # Множественный выбор
+    "соц7": "multiple_choice",
+    "соц10": "multiple_choice",
+    # Падежи и варианты написания
+    "соц 1": "single_choice",
+    "соц 2": "single_choice",
+    "соц 3": "single_choice",
+    "соц 4": "single_choice",
+    "соц 5": "single_choice",
+    "соц 6": "single_choice",
+    "соц 7": "multiple_choice",
+    "соц 8": "single_choice",
+    "соц 9": "single_choice",
+    "соц 10": "multiple_choice",
+    "соц 11": "single_choice",
+    "соц 12": "single_choice",
+    "соц 13": "single_choice",
+    "соц 14": "single_choice",
+    "соц 15": "single_choice",
+}
 
-def detect_column_type(series: pd.Series, sample_size: int = 500) -> str:
+
+def get_sheet_category(sheet_name: str) -> str:
     """
-    Определяет тип колонки на основе анализа значений.
-
-    Returns:
-        'numeric': все значения можно привести к числу
-        'single_choice': текстовые значения, нет разделителей, мало уникальных
-        'multiple_choice': есть разделители (;, ,, |)
-        'skip': свободный текст, много уникальных значений
+    Возвращает категорию листа по его имени.
+    Если лист не найден в словаре — возвращает 'unknown'.
     """
-    # Удаляем NaN
-    clean_series = series.dropna()
-    if len(clean_series) == 0:
-        return "skip"
+    # Нормализуем имя: убираем лишние пробелы, приводим к нижнему регистру
+    normalized = sheet_name.strip().lower()
 
-    # Берём сэмпл для анализа
-    if len(clean_series) > sample_size:
-        clean_series = clean_series.sample(n=sample_size, random_state=42)
+    # Прямое совпадение
+    if normalized in SHEET_CATEGORY_MAP:
+        return SHEET_CATEGORY_MAP[normalized]
 
-    # 1. Проверка на числовой
-    numeric_test = pd.to_numeric(clean_series, errors="coerce")
-    if numeric_test.notna().mean() >= 0.95:  # 95% можно привести к числу
-        return "numeric"
+    # Поиск по частичному совпадению (соц1 -> соц1, соц 1)
+    for key, category in SHEET_CATEGORY_MAP.items():
+        if key in normalized or normalized in key:
+            return category
 
-    # Преобразуем в строки для дальнейшего анализа
-    str_series = clean_series.astype(str)
-
-    # 2. Проверка на множественный выбор (наличие разделителей)
-    separators = [";", ",", "|", "/", "\\", "—"]
-    for sep in separators:
-        if str_series.str.contains(sep).any():
-            return "multiple_choice"
-
-    # 3. Проверка на единственный выбор
-    unique_count = str_series.nunique()
-    total_count = len(str_series)
-    unique_ratio = unique_count / total_count
-    avg_length = str_series.str.len().mean()
-
-    # Мало уникальных значений → категориальный (single_choice)
-    if unique_ratio < 0.5:
-        return "single_choice"
-
-    # Много уникальных и длинные тексты → skip (свободные ответы)
-    if unique_ratio > 0.8 and avg_length > 30:
-        return "skip"
-
-    # По умолчанию single_choice
-    return "single_choice"
+    return "unknown"
 
 
-def detect_sheet_group(df: pd.DataFrame, sample_size: int = 1000) -> str:
+def detect_sheet_group(df: pd.DataFrame, sheet_name: str = None, sample_size: int = 1000) -> str:
     """
     Определяет группу листа по содержимому колонок (4 категории).
 
     Args:
-        columns: список имён колонок листа
         sheet_name: опционально, имя листа для более точного определения
 
     Returns:
         str: группа листа ('grades', 'psychology', 'survey', 'unknown', ...)
     """
-    print(f"DEBUG detect_sheet_group: type(df)={type(df)}")
-    print(f"DEBUG detect_sheet_group: hasattr columns={hasattr(df, 'columns')}")
-    df_sample = df.head(sample_size) if len(df) > sample_size else df
+    print(f"DEBUG detect_sheet_group: type(df)={sheet_name}")
+    if sheet_name:
+        category = get_sheet_category(sheet_name)
+        if category != "unknown":
+            print(f"Лист '{sheet_name}' определён по словарю как '{category}'")
+            return category
 
-    column_types = []
-
-    for col in df_sample.columns:
-        col_clean = col.strip().lower()
-        if col_clean in SERVICE_COLS:
-            continue
-
-        col_type = detect_column_type(df_sample[col])
-        column_types.append(col_type)
-
-    if not column_types:
-        return "skip"
-
-    # Анализируем все колонки
-    numeric_count = column_types.count("numeric")
-    single_count = column_types.count("single_choice")
-    multi_count = column_types.count("multiple_choice")
-    skip_count = column_types.count("skip")
-    total = len(column_types)
-
-    # Определяем основной тип
-    if numeric_count == total:
-        return "numeric"
-    elif multi_count > 0:
-        return "multiple_choice"
-    elif skip_count > total * 0.7:  # >70% skip-колонок
-        return "skip"
-    elif single_count > 0:
-        return "single_choice"
-    else:
-        return "mixed"
+    # 2. Fallback: автоопределение по содержимому
+    # df_sample = df.head(sample_size) if len(df) > sample_size else df
 
 
 def normalize_sheet_group(sheet_group: str | None) -> str:
@@ -168,7 +153,7 @@ def get_sheet_preview(file_path: str, sheet_name: str) -> dict:
     print(f"DEBUG get_sheet_preview: type(df) after load = {type(df)}")
 
     # 4. Определяем группу (передаём DataFrame!)
-    group = detect_sheet_group(df)
+    group = detect_sheet_group(sheet_name=sheet_name)
     print(f"DEBUG get_sheet_preview: detected_group = '{group}'")
 
     cols_info = []
@@ -217,23 +202,66 @@ def get_sheet_preview(file_path: str, sheet_name: str) -> dict:
     }
 
 
-def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None, mapping_config: dict = None) -> tuple:
+def preprocess_sheet(
+    df: pd.DataFrame, sheet_group: str, sheet_name: str = None, mapping_config: dict = None, chunk_size: int = 10000
+) -> tuple:
+    """
+    Предобработка одного листа Excel с поддержкой батчинга для больших данных.
+
+    Args:
+        df: исходный DataFrame
+        sheet_group: группа листа (numeric, single_choice, multiple_choice, skip)
+        sheet_name: имя листа
+        mapping_config: словарь настроек от пользователя
+        chunk_size: размер чанка для обработки (по умолчанию 50k строк)
+
+    Returns:
+        (df_processed, message): обработанный DataFrame и сообщение
+    """
+    # Если данных мало — обрабатываем сразу
+    if len(df) <= chunk_size:
+        return preprocess_sheet_impl(df, sheet_group, sheet_name, mapping_config)
+
+    # Большие данные — обрабатываем чанками
+    logger.info(f"Данные большие ({len(df)} строк). Обработка чанками по {chunk_size}...")
+
+    processed_chunks = []
+    total_chunks = (len(df) + chunk_size - 1) // chunk_size
+
+    for i, start in enumerate(range(0, len(df), chunk_size)):
+        chunk = df.iloc[start : start + chunk_size].copy()
+        logger.info(f"Обработка чанка {i + 1}/{total_chunks} ({len(chunk)} строк)")
+
+        processed_chunk, _ = preprocess_sheet_impl(chunk, sheet_group, sheet_name, mapping_config)
+        processed_chunks.append(processed_chunk)
+
+    # Объединяем результаты
+    result = pd.concat(processed_chunks, axis=0, ignore_index=True)
+    result = optimize_dtypes(result)
+
+    message = f"Обработано {len(df)} строк чанками по {chunk_size} (всего {total_chunks} чанков)"
+    return result, message
+
+
+def preprocess_sheet_impl(
+    df: pd.DataFrame, sheet_group: str, sheet_name: str = None, mapping_config: dict = None
+) -> tuple:
     """
     Предобработка одного листа Excel.
     mapping_config: словарь настроек от пользователя {col_name: {type: ..., map: ...}}
     """
     df = df.copy()
+    df = optimize_dtypes(df)
+
     sheet_group = normalize_sheet_group(sheet_group)
     message_parts = [f"Лист '{sheet_name}' → группа: {sheet_group}"]
 
     # Базовая очистка
     df = df.dropna(how="all").dropna(axis=1, how="all")
     df = df.loc[:, ~df.columns.str.startswith("Unnamed")]
-    from ml_core.config import optimize_dtypes
 
-    df = optimize_dtypes(df)
     # Поиск user_col
-    user_col = next((col for col in ["user", "user_id", "VK_id", "VK", "student_id"] if col in df.columns), None)
+    user_col = next((col for col in ["user", "user_id", "VK_id", "VK"] if col in df.columns), None)
     if not user_col:
         df["user_id"] = range(len(df))
         user_col = "user_id"
@@ -347,6 +375,7 @@ def preprocess_sheet(df: pd.DataFrame, sheet_group: str, sheet_name: str = None,
     service_cols = [col for col in df.columns if str(col).strip().lower() in SERVICE_COLS]
     if service_cols:
         df = df.drop(columns=service_cols)
+
     # === 4. Гарантируем наличие идентификатора студента ===
     if "student_id" not in df.columns:
         df["student_id"] = [f"student_{i:06d}" for i in range(len(df))]
@@ -426,176 +455,3 @@ def process_multiple_choice_column(df: pd.DataFrame, col: str, prefix: str = "",
     df = df.drop(columns=[col])
 
     return df
-
-
-# def detect_sheet_type(sheet_name: str) -> str:
-#     """
-#     Определяет тип листа по его имени (ключевые слова: williams, schwartz, соц...).
-#
-#     Args:
-#         sheet_name: имя листа Excel
-#
-#     Returns:
-#         str: тип листа ('williams', 'schwartz', 'demographics', ...)
-#     """
-#     sheet_lower = sheet_name.lower()
-#
-#     if "вильямс" in sheet_lower:
-#         return "williams"
-#     elif "шварц" in sheet_lower:
-#         return "schwartz"
-#     elif "соц" in sheet_lower:
-#         if "соц14" in sheet_lower or "соцдем" in sheet_lower:
-#             return "demographics"
-#         elif "соц11" in sheet_lower or "соц12" in sheet_lower or "соц13" in sheet_lower:
-#             return "career"
-#         elif "соц9" in sheet_lower:
-#             return "grades"
-#         elif "соц8" in sheet_lower:
-#             return "attitudes"
-#         elif "соц4" in sheet_lower or "соц5" in sheet_lower or "соц6" in sheet_lower:
-#             return "activities"
-#         elif "соц3" in sheet_lower:
-#             return "digital"
-#         elif "соц2" in sheet_lower:
-#             return "interests"
-#         elif "соц1" in sheet_lower:
-#             return "personality"
-#         else:
-#             return "social"
-#
-#     return "unknown"
-#
-# def load_excel_sheet(file_path: str, sheet_name: str) -> tuple:
-#     """
-#     Загружает, определяет тип и предобрабатывает один лист Excel.
-#
-#     Args:
-#         file_path: путь к Excel-файлу
-#         sheet_name: имя листа
-#
-#     Returns:
-#         (df_processed, message): обработанный DataFrame и сообщение
-#     """
-#     df = pd.read_excel(file_path, sheet_name=sheet_name)
-#     sheet_type = detect_sheet_type_by_columns(df.columns, sheet_name)
-#     df_processed, msg = preprocess_sheet(df, sheet_type)
-#     return df_processed, msg
-#
-# def get_sheet_names(file_path: str) -> list:
-#     """
-#     Возвращает список имён листов в Excel-файле.
-#
-#     Args:
-#         file_path: путь к Excel-файлу
-#
-#     Returns:
-#         list[str]: имена листов
-#     """
-#     xl = pd.ExcelFile(file_path)
-#     return xl.sheet_names
-# def process_multiple_choice_ordinal_column(df: pd.DataFrame, col: str, separator: str = ";") -> pd.DataFrame:
-#     """
-#     Для multiple-choice строит один ordinal-скор вместо one-hot.
-#     Скор = средний ранг выбранных вариантов (ранги по алфавиту вариантов).
-#     """
-#     if col not in df.columns:
-#         return df
-#
-#     df = df.copy()
-#     separators = [separator, ", ", "; ", ",", ";", " | ", "|"]
-#
-#     def split_choices(text):
-#         if pd.isna(text):
-#             return []
-#         text = str(text).strip()
-#         for sep in separators:
-#             if sep in text:
-#                 return [x.strip() for x in text.split(sep) if x.strip()]
-#         return [text] if text else []
-#
-#     all_choices = set()
-#     for val in df[col].dropna():
-#         all_choices.update(split_choices(val))
-#     all_choices = sorted(all_choices)
-#     if not all_choices:
-#         df[col] = 0
-#         return df
-#
-#     ranks = {choice: idx + 1 for idx, choice in enumerate(all_choices)}
-#
-#     def score_row(value):
-#         parts = split_choices(value)
-#         if not parts:
-#             return 0
-#         vals = [ranks[p] for p in parts if p in ranks]
-#         if not vals:
-#             return 0
-#         return float(sum(vals)) / float(len(vals))
-#
-#     df[col] = df[col].apply(score_row)
-#     return df
-#
-#
-# def preprocess_excel_data(file_path: str) -> tuple:
-#     """
-#     Загружает все листы Excel, определяет типы, предобрабатывает каждый
-#     и объединяет по user_id (outer join).
-#
-#     Args:
-#         file_path: путь к Excel-файлу
-#
-#     Returns:
-#         (df_merged, message): объединённый DataFrame и сводное сообщение
-#     """
-#     try:
-#         xl = pd.ExcelFile(file_path)
-#         sheet_names = xl.sheet_names
-#
-#         all_dfs = []
-#         message_parts = []
-#
-#         for sheet_name in sheet_names:
-#             df_headers = pd.read_excel(file_path, sheet_name=sheet_name, nrows=0)
-#             sheet_group = detect_sheet_group(df_headers.columns, sheet_name)
-#
-#             df_sheet = pd.read_excel(file_path, sheet_name=sheet_name)
-#             df_processed, msg = preprocess_sheet(df_sheet, sheet_group, sheet_name)
-#
-#             message_parts.append(f"{sheet_name}: {msg}")
-#
-#             if not df_processed.empty:
-#                 df_processed["_source_sheet"] = sheet_name
-#                 df_processed["_sheet_type"] = sheet_group
-#                 all_dfs.append(df_processed)
-#
-#         if all_dfs:
-#             result_df = all_dfs[0]
-#             for i, df_to_merge in enumerate(all_dfs[1:], 1):
-#                 user_col = next(
-#                     (
-#                         col
-#                         for col in ["user", "user_id", "VK_id", "VK"]
-#                         if col in result_df.columns and col in df_to_merge.columns
-#                     ),
-#                     None,
-#                 )
-#                 if user_col:
-#                     result_df = result_df.merge(
-#                         df_to_merge, on=user_col, how="outer", suffixes=("", f"_{sheet_names[i]}")
-#                     )
-#                 else:
-#                     result_df = pd.concat([result_df, df_to_merge], axis=1)
-#
-#             # Удаляем технические колонки
-#             for col in ["_source_sheet", "_sheet_type"]:
-#                 if col in result_df.columns:
-#                     result_df = result_df.drop(columns=[col])
-#
-#             message = f"Обработано {len(sheet_names)} листов. Пропущено: {len(sheet_names) - len(all_dfs)}"
-#             return result_df, message
-#
-#         return None, "Нет данных после обработки"
-#
-#     except Exception as e:
-#         return None, f"Ошибка при обработке Excel: {str(e)}"

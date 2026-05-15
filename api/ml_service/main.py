@@ -178,12 +178,17 @@ async def full_analysis(request: AnalysisRequest):
             target_col=target,
             n_clusters=request.n_clusters,
             corr_threshold=request.corr_threshold,
+            risk_threshold=request.risk_threshold,
             use_smote=request.use_smote,
             # Передаем настройки моделей из сайдбара
             use_lr=request.use_lr,
             use_rf=request.use_rf,
             use_xgb=request.use_xgb,
             optimization_metric=request.optimization_metric,
+            n_features_to_select=getattr(request, "n_features_to_select", None),
+            shap_top_n=getattr(request, "shap_top_n", 5),
+            use_hp_tuning=getattr(request, "use_hp_tuning", False),
+            n_iter_tuning=getattr(request, "n_iter_tuning", 20),
         )
 
         # Сериализуем графики Plotly в JSON
@@ -230,8 +235,9 @@ async def full_analysis(request: AnalysisRequest):
             "corr_threshold": request.corr_threshold,
             "optimization_metric": request.optimization_metric,
         }
-
-        return {
+        print(f"🔵🔵🔵 ПЕРЕД RETURN: target = {target}")
+        print(f"🔵🔵🔵 ТИП target = {type(target)}")
+        response = {
             "status": result.status,
             "message": result.message,
             "config": analysis_config,
@@ -251,6 +257,11 @@ async def full_analysis(request: AnalysisRequest):
             "fig_clusters": plot_to_json(result.fig_clusters),
             "fig_corr": plot_to_json(result.fig_corr),
         }
+
+        print(f"🔵🔵🔵 КЛЮЧИ ОТВЕТА: {list(response.keys())}")
+        print(f"🔵🔵🔵 target_col в ответе: {response.get('target_col')}")
+
+        return response
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка анализа: {str(e)}")

@@ -1,5 +1,5 @@
 import time
-from typing import Optional, Dict, Any
+from typing import Optional
 import pandas as pd
 from .config import config
 from .features import add_composite_features, build_composite_score, get_base_features, preprocess_data_for_smote
@@ -7,8 +7,7 @@ from .analysis import correlation_analysis, cluster_students, analyze_cluster_pr
 from .models import ModelTrainer
 from .evaluation import generate_shap_explanations, plot_confusion_matrix, plot_roc_curves, plot_feature_importance
 from .error_handler import safe_execute, logger
-from .schemas import AnalysisRequest, AnalysisResult
-from .timeseries import TimeSeriesAnalyzer
+from api.ml_service.schemas import AnalysisResponse
 from .text_processor import extract_text_features
 from sklearn.model_selection import train_test_split
 import numpy as np
@@ -36,8 +35,12 @@ class ResearchAnalyzer:
         use_rf: bool = True,
         use_xgb: bool = True,
         optimization_metric: Optional[str] = None,
+        n_features_to_select: int = 7,
+        shap_top_n: int = 5,
+        use_hp_tuning: bool = False,
+        n_iter_tuning: int = 20,
         progress_callback=None,
-    ) -> AnalysisResult:
+    ) -> AnalysisResponse:
         """
         Полный пайплайн АРМ исследователя: текст → композиты → корреляция →
         кластеризация → SMOTE → отбор признаков → CV → обучение → SHAP → графики.
@@ -50,6 +53,15 @@ class ResearchAnalyzer:
             corr_threshold: порог для корреляционного анализа
             is_synthetic: являются ли данные синтетическими
             use_smote: применять ли SMOTE
+            use_lr: использование Linear Regression,
+            use_rf: использование Random Forest,
+            use_xgb: использование XGBoost,
+            optimization_metric: основная выбранная метрика,
+            n_features_to_select: выборка признаков,
+            shap_top_n: ограничение для объяснений SHAP,
+            use_hp_tuning: использование тонкой настройки XGBoost,
+            n_iter_tuning: количество итераций тонкой настройки,
+            progress_callback: функция callback для прогресс-бара,
 
         Returns:
             AnalysisResult: полный результат анализа
@@ -94,6 +106,26 @@ class ResearchAnalyzer:
             if target_col in all_features:
                 print(f"[WARNING] Target column {target_col} is in features! Removing...")
                 all_features.remove(target_col)
+            if n_features_to_select and n_features_to_select < len(all_features):
+                report(f"Отбор {n_features_to_select} лучших признаков", 18)
+
+                from sklearn.feature_selection import SelectKBest, f_classif
+
+                # Временно убираем target из признаков (если затесался)
+                temp_features = [f for f in all_features if f != target_col]
+
+                X_temp = df[temp_features].fillna(df[temp_features].median())
+                y_temp = df[target_col]
+
+                selector = SelectKBest(f_classif, k=min(n_features_to_select, len(temp_features)))
+                selector.fit(X_temp, y_temp)
+
+                # Получаем маску отобранных признаков
+                selected_mask = selector.get_support()
+                all_features = [f for f, flag in zip(temp_features, selected_mask) if flag]
+
+                logger.info(f"Отобрано {len(all_features)} признаков из {len(temp_features)}")
+                report(f"Отобрано признаков: {len(all_features)}", 19)
 
             report("Корреляционный анализ", 20)
             corr_result = safe_execute(
@@ -165,15 +197,43 @@ class ResearchAnalyzer:
             original_models_backup = self.trainer.models
             self.trainer.models = active_models
             # ==========================================================
+            if use_hp_tuning and "XGB" in active_models:
+                report("Оптимизация гиперпараметров XGBoost", 55)
+
+                best_model, best_params, best_score = self.trainer.tune_xgboost(
+                    X_train, y_train, n_iter=n_iter_tuning, cv_folds=3  # можно вынести в параметр
+                )
+
+                # Заменяем XGB модель на оптимизированную
+                self.trainer.models["XGB"] = best_model
+                logger.info(f"Лучшие параметры XGBoost: {best_params}")
+                logger.info(f"Лучший F1 (CV): {best_score:.4f}")
+
+                report("Оптимизация завершена", 58)
 
             report("Обучение моделей", 60)
-            model, model_name, metrics = self.trainer.train_best_model(
+            model, model_name, results = self.trainer.train_models_parallel(
                 X_train, y_train, X_test, y_test, scoring=optimization_metric
             )
+            metrics = {"test": results[model_name]["metrics"], "cv_results": {}}
 
             # Возвращаем оригинальный набор моделей обратно
             self.trainer.models = original_models_backup
+
             # ==========================================================
+            predictions = []
+            if hasattr(model, "predict_proba") and X_test is not None:
+                proba = model.predict_proba(X_test)[:, 1].tolist()
+                y_pred_list = model.predict(X_test).tolist()
+
+                for i in range(len(y_pred_list)):
+                    predictions.append(
+                        {
+                            "student_index": i,
+                            "prediction": int(y_pred_list[i]),
+                            "probability": round(float(proba[i]), 4),
+                        }
+                    )
 
             # SHAP
             report("SHAP объяснения", 80)
@@ -184,6 +244,7 @@ class ResearchAnalyzer:
                 all_features,
                 threshold=risk_threshold,
                 target_name=target_col,
+                top_n=shap_top_n,
             )
 
             self.last_df = df
@@ -263,14 +324,16 @@ class ResearchAnalyzer:
             self.last_df = df_with_clusters
             report("Завершение", 100)
             # Добавляем в результат
-            return AnalysisResult(
+            return AnalysisResponse(
                 metrics=metrics,
+                target_col=target_col,
                 test_metrics=metrics.get("test", {}),
                 selected_features=all_features,
                 cluster_profiles=(
                     cluster_profiles.to_dict() if hasattr(cluster_profiles, "to_dict") else cluster_profiles
                 ),
                 explanations=explanations or [],
+                predictions=predictions,
                 cv_results=metrics.get("cv_results", {}),
                 status="success",
                 model_name=model_name,
@@ -286,7 +349,7 @@ class ResearchAnalyzer:
 
         except Exception as e:
             logger.error(f"Ошибка в run_full_analysis: {str(e)}", exc_info=True)
-            return AnalysisResult(
+            return AnalysisResponse(
                 metrics={},
                 test_metrics={},
                 selected_features=[],
@@ -310,109 +373,6 @@ class ResearchAnalyzer:
             (df, score_name): DataFrame с новой колонкой и имя
         """
         return build_composite_score(df, feature_weights, score_name)
-
-    def analyze_student(
-        self, student_id: str, value_col: str = "avg_grade", time_col: str = "semester", min_points: int = 3
-    ) -> Dict[str, Any]:
-        """
-        Полный анализ траектории одного студента.
-
-        Args:
-            student_id: идентификатор студента
-            value_col: колонка с анализируемым показателем (например, 'avg_grade')
-            time_col: колонка с временной осью (например, 'semester')
-            min_points: минимальное количество точек для анализа
-
-        Returns:
-            dict: {
-                'student_id': str,
-                'n_points': int,
-                'trend': float,
-                'r2': float,
-                'status': str ('improving'|'stable'|'declining'),
-                'first_value': float,
-                'last_value': float,
-                'figure': plotly.graph_objects.Figure,
-                'values': list,
-                'times': list
-            }
-        """
-        try:
-            analyzer = TimeSeriesAnalyzer(self.df, student_id_col="student_id")
-            return analyzer.analyze_student(
-                student_id=student_id, value_col=value_col, time_col=time_col, min_points=min_points
-            )
-        except Exception as e:
-            logger.error(f"Ошибка анализа траектории студента {student_id}: {e}")
-            return {"status": "error", "message": str(e)}
-
-    def detect_negative_dynamics(
-        self, value_col: str = "avg_grade", time_col: str = "semester", threshold: float = -0.08, min_points: int = 3
-    ) -> Dict[str, Any]:
-        """
-        Выявляет студентов с статистически значимой негативной динамикой.
-
-        Args:
-            value_col: колонка с показателем
-            time_col: колонка времени
-            threshold: порог тренда для отнесения к "риску"
-            min_points: минимальное количество наблюдений у студента
-
-        Returns:
-            dict: {
-                'n_students_analyzed': int,
-                'at_risk_count': int,
-                'risk_percentage': float,
-                'threshold': float,
-                'at_risk_students': list[dict],
-                'all_students': list[dict]
-            }
-        """
-        try:
-            analyzer = TimeSeriesAnalyzer(self.df, student_id_col="student_id")
-            return analyzer.detect_negative_dynamics(
-                value_col=value_col, time_col=time_col, threshold=threshold, min_points=min_points
-            )
-        except Exception as e:
-            logger.error(f"Ошибка поиска негативной динамики: {e}")
-            return {
-                "n_students_analyzed": 0,
-                "at_risk_count": 0,
-                "risk_percentage": 0.0,
-                "threshold": threshold,
-                "at_risk_students": [],
-                "all_students": [],
-            }
-
-    def forecast_student(
-        self, student_id: str, value_col: str = "avg_grade", time_col: str = "semester", periods: int = 2
-    ) -> Dict[str, Any]:
-        """
-        Прогнозирует значения показателя студента на будущие периоды.
-
-        Args:
-            student_id: идентификатор студента
-            value_col: колонка с показателем
-            time_col: колонка времени
-            periods: количество будущих периодов для прогноза
-
-        Returns:
-            dict: {
-                'student_id': str,
-                'future_periods': list[int],
-                'predictions': list[float],
-                'trend': float
-            }
-        """
-
-        try:
-            analyzer = TimeSeriesAnalyzer(self.df, student_id_col="student_id")
-            return analyzer.forecast_student(
-                student_id=student_id, value_col=value_col, time_col=time_col, periods=periods
-            )
-        except Exception as e:
-            logger.error(f"Ошибка прогнозирования для студента {student_id}: {e}")
-            return {"error": str(e)}
 
     def select_subset(
         self,
@@ -466,157 +426,3 @@ class ResearchAnalyzer:
             subset = df
 
         return subset.reset_index(drop=True)
-
-    def save_experiment(self, name: str, additional_data: dict = None) -> str:
-        """
-        Сохраняет текущий эксперимент (метрики, модель, объяснения).
-
-        Args:
-            name: название эксперимента
-            additional_data: дополнительные данные для сохранения
-
-        Returns:
-            str: идентификатор эксперимента
-        """
-        from .experiment_tracker import ExperimentTracker
-
-        tracker = ExperimentTracker()
-
-        data = {
-            "metrics": getattr(self, "last_metrics", {}),
-            "features": getattr(self, "last_features", []),
-            "model_name": getattr(self, "last_model_name", "unknown"),
-            "n_samples": len(getattr(self, "last_df", pd.DataFrame())),
-            "description": name,
-            **(additional_data or {}),
-        }
-
-        exp_id = tracker.save_experiment(name, data)
-        logger.info(f"Эксперимент сохранён: {exp_id}")
-        return exp_id
-
-    def load_experiment(self, experiment_id: str) -> dict:
-        """
-        Загружает сохранённый эксперимент.
-
-        Args:
-            experiment_id: идентификатор эксперимента
-
-        Returns:
-            dict: метаданные, модель, объяснения, предсказания
-        """
-        from .experiment_tracker import ExperimentTracker
-
-        tracker = ExperimentTracker()
-        return tracker.load_experiment(experiment_id)
-
-    def run_full_analysis_by_request(self, request: AnalysisRequest) -> AnalysisResult:
-        """
-        Высокоуровневый метод для вызова из бэкенда через API.
-        Принимает Pydantic-запрос и возвращает структурированный результат.
-
-        Args:
-            request: AnalysisRequest с данными и параметрами анализа
-
-        Returns:
-            AnalysisResult: полный результат или ошибка
-        """
-        try:
-            # Здесь в будущем будет загрузка данных из БД по request.data_source_id
-            # Пока оставляем прямой приём df (для совместимости)
-            if request.df is None:
-                raise ValueError("DataFrame не передан в запросе. Используйте run_full_analysis напрямую.")
-
-            # Преобразуем Any в DataFrame, если пришёл dict/list
-            if isinstance(request.df, (dict, list)):
-                df = pd.DataFrame(request.df)
-            else:
-                df = request.df
-
-            return self.run_full_analysis(
-                df=df,
-                target_col=request.target_col,
-                n_clusters=request.n_clusters,
-                risk_threshold=request.risk_threshold,
-                corr_threshold=request.corr_threshold,
-                is_synthetic=request.is_synthetic,
-                use_smote=request.use_smote,
-            )
-
-        except Exception as e:
-            logger.error(f"Ошибка в run_full_analysis_by_request: {str(e)}", exc_info=True)
-            return AnalysisResult(
-                metrics={},
-                test_metrics={},
-                selected_features=[],
-                cluster_profiles={},
-                explanations=[],
-                status="error",
-                message=str(e),
-            )
-
-    def run_full_analysis_by_source(
-        self,
-        source_id: int,
-        source_type: str = "prepared_survey",
-        n_clusters: int = 3,
-        risk_threshold: float = 0.5,
-        corr_threshold: float = 0.3,
-        use_smote: bool = True,
-        **kwargs,
-    ) -> AnalysisResult:
-        """
-        Запускает анализ по ID источника данных из хранилища (заглушка).
-
-        Args:
-            source_id: идентификатор источника данных
-            source_type: тип источника ('prepared_survey', 'synthetic', ...)
-            n_clusters: число кластеров K-means
-            risk_threshold: порог классификации риска
-            corr_threshold: порог корреляционного анализа
-            use_smote: применять ли SMOTE
-
-        Returns:
-            AnalysisResult: результат анализа или ошибка
-        """
-        try:
-            # Здесь в будущем будет вызов репозитория / ORM
-            # TODO Пока — заглушка. Заменить на реальную загрузку из БД
-            df = self._load_prepared_data(source_id, source_type)
-
-            if df is None or df.empty:
-                return AnalysisResult(status="error", message=f"Данные с source_id={source_id} не найдены или пусты")
-
-            # Определяем is_synthetic для get_base_features
-            is_synthetic = source_type.startswith("synthetic")
-
-            return self.run_full_analysis(
-                df=df,
-                target_col=kwargs.get("target_col", "risk_flag"),
-                n_clusters=n_clusters,
-                risk_threshold=risk_threshold,
-                corr_threshold=corr_threshold,
-                is_synthetic=is_synthetic,
-                use_smote=use_smote,
-            )
-
-        except Exception as e:
-            logger.error(f"Ошибка в run_full_analysis_by_source: {str(e)}", exc_info=True)
-            return AnalysisResult(status="error", message=str(e))
-
-    # Вспомогательный приватный метод-заглушка
-    def _load_prepared_data(self, source_id: int, source_type: str) -> Optional[pd.DataFrame]:
-        """
-        В будущем здесь будет обращение к БД / хранилищу.
-        Сейчас — заглушка для отладки.
-        """
-        # Пример: если source_type == "synthetic", можно загрузить из data.py
-        if source_type == "synthetic":
-            from .data import load_data
-
-            result = load_data(category="grades", n_students=500)
-            return result["data"]
-
-        # Для реальных данных — здесь будет запрос в БД
-        logger.warning(f"Заглушка: данные для source_id={source_id} не загружены")
-        return None

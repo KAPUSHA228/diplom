@@ -6,13 +6,15 @@ class AnalysisRequest(BaseModel):
     """Запрос на полный анализ"""
 
     df: List[Dict[str, Any]]
-    target_col: str = "risk_flag"
+    target_col: str
     n_clusters: int = Field(3, ge=2, le=8)
+    risk_threshold: float = Field(0.5, ge=0.0, le=1.0)
     corr_threshold: float = Field(0.3, ge=0.0, le=1.0)
     use_smote: bool = True
     n_features_to_select: int = Field(7, ge=3, le=15)
-
+    is_synthetic: bool = Field(False, description="Являются ли данные синтетическими")
     use_hp_tuning: bool = False
+    n_iter_tuning: int = (20,)
     optimization_metric: Optional[str] = None
     shap_top_n: int = Field(5, ge=1, le=20)
     use_lr: bool = True
@@ -43,19 +45,34 @@ class AnalysisResponse(BaseModel):
 
     status: str = "success"
     message: Optional[str] = None
+    target_col: Optional[str] = None
+    # Основные результаты анализа
     metrics: Dict[str, Any] = Field(default_factory=dict)
     test_metrics: Dict[str, float] = Field(default_factory=dict)
     cv_results: Dict[str, Any] = Field(default_factory=dict)
     selected_features: List[str] = Field(default_factory=list)
+
+    # Кластеризация
     cluster_profiles: Dict[str, Any] = Field(default_factory=dict)
+
+    # Объяснимость
     explanations: List[Dict[str, Any]] = Field(default_factory=list)
+
     predictions: Optional[List[Dict[str, Any]]] = None
-    fig_cm: Optional[Dict[str, Any]] = None
-    fig_roc: Optional[Dict[str, Any]] = None
-    fig_fi: Optional[Dict[str, Any]] = None
-    fig_clusters: Optional[Dict[str, Any]] = None
+
+    # Графики (Plotly фигуры)
+    fig_cm: Optional[Any] = None  # Confusion Matrix
+    fig_roc: Optional[Any] = None  # ROC-кривые
+    fig_fi: Optional[Any] = None  # Feature Importance
+    fig_clusters: Optional[Any] = None  # PCA кластеры
+    fig_corr: Optional[Any] = None  # Correlation heatmap
+
     data_with_clusters: Optional[List[Dict[str, Any]]] = None
-    data: Optional[List[Dict[str, Any]]] = None
+
+    # Дополнительные данные для UI
+    last_y_test: Optional[List] = None
+    last_y_pred: Optional[List] = None
+    model_name: Optional[str] = None
 
 
 class PredictRequest(BaseModel):

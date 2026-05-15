@@ -65,7 +65,7 @@ async def excel_preview(file: UploadFile = File(...), sheet_name: str = Form("0"
 
         print(f"DEBUG excel_preview: ФИНАЛЬНОЕ target_name='{target_name}'")
 
-        preview = get_sheet_preview(tmp_path, target_name)
+        preview = get_sheet_preview(tmp_path, sheet_name=sheet_name)
         xl.close()  # Обязательно закрываем файл перед удалением!
         return safe_json_serializable(preview)
     except Exception as e:

@@ -185,6 +185,10 @@ def full_analysis_task(self, data: list, params: dict):
             use_rf=params.get("use_rf", True),
             use_xgb=params.get("use_xgb", True),
             optimization_metric=params.get("optimization_metric", None),
+            n_features_to_select=params.get("n_features_to_select", 7),
+            shap_top_n=params.get("shap_top_n", 5),
+            use_hp_tuning=params.get("use_hp_tuning", False),
+            n_iter_tuning=params.get("n_iter_tuning", 20),
             progress_callback=report_progress,
         )
 
@@ -197,6 +201,7 @@ def full_analysis_task(self, data: list, params: dict):
         return {
             "status": "success",
             "result": serialized_result,
+            "target_col": params.get("target_col", "risk_flag"),
         }
 
     except Exception as e:

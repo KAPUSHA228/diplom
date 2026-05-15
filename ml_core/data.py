@@ -1,6 +1,5 @@
 """
 Модуль для работы с данными
-ВАША ЗОНА ОТВЕТСТВЕННОСТИ
 """
 
 import pandas as pd
@@ -75,7 +74,6 @@ def save_data_for_monitoring(df, feature_cols, semester="spring_2026", directory
     return filepath
 
 
-# ---- Загрузка данных согласно ТЗ ----
 @lru_cache(maxsize=32)
 def load_data(category: str = "grades", n_students: int = 500, generate_two_sets: bool = False):
     """

@@ -1,6 +1,5 @@
 """
 Модуль с моделями машинного обучения
-ВАША ЗОНА ОТВЕТСТВЕННОСТИ
 """
 
 import joblib
@@ -18,6 +17,7 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class ModelTrainer:
@@ -96,6 +96,44 @@ class ModelTrainer:
             }
 
         return best_model, best_model_name, metrics
+
+    def train_models_parallel(self, X_train, y_train, X_test, y_test, scoring=None):
+        """Параллельное обучение всех моделей"""
+
+        def train_single(name, model):
+            # Обучаем модель
+            model.fit(X_train, y_train)
+
+            # Предсказания на тесте
+            preds = model.predict(X_test)
+            proba = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else None
+
+            # Метрики
+            from sklearn.metrics import f1_score, roc_auc_score, precision_score, recall_score
+
+            metrics = {
+                "f1": f1_score(y_test, preds),
+                "precision": precision_score(y_test, preds),
+                "recall": recall_score(y_test, preds),
+            }
+            if proba is not None:
+                metrics["roc_auc"] = roc_auc_score(y_test, proba)
+
+            return name, model, metrics
+
+        results = {}
+        with ThreadPoolExecutor(max_workers=len(self.models)) as executor:
+            futures = {executor.submit(train_single, name, model): name for name, model in self.models.items()}
+
+            for future in as_completed(futures):
+                name, model, metrics = future.result()
+                results[name] = {"model": model, "metrics": metrics}
+
+        # Выбираем лучшую модель по scoring
+        score = scoring if scoring else "f1"
+        best_name = max(results, key=lambda x: results[x]["metrics"].get(score, 0))
+
+        return results[best_name]["model"], best_name, results
 
     def save_model(self, model, model_name, metrics, features):
         """

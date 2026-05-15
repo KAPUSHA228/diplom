@@ -29,23 +29,21 @@ redis_client = redis.from_url(_REDIS_URL, decode_responses=False) if REDIS_AVAIL
 CACHE_TTL = 3600  # 1 час
 
 
-def _make_key(func_name: str, *args, **kwargs) -> str:
+def _make_key(func_name: str, dataset_id: str, *args, **kwargs) -> str:
     """Генерирует уникальный ключ для кеширования."""
     # Хешируем аргументы, чтобы создать уникальный ключ
     # Для pandas DataFrame используем хеш содержимого
-    hash_obj = hashlib.md5()
+    key_data = f"{func_name}|dataset={dataset_id}"
 
-    # Простая сериализация аргументов для ключа
-    key_data = f"{func_name}|"
     for arg in args:
         if isinstance(arg, pd.DataFrame):
-            key_data += str(hash(pd.util.hash_pandas_object(arg).sum()))
-        else:
-            key_data += str(arg)
-    key_data += str(kwargs)
+            # key_data += f"|shape={arg.shape}|seed=42"
+            # key_data += str(hash(pd.util.hash_pandas_object(arg).sum()))
+            continue  # пропускаем DataFrame
+        key_data += f"|{arg}"
 
-    hash_obj.update(key_data.encode("utf-8"))
-    return f"ml_cache:{func_name}:{hash_obj.hexdigest()}"
+    key_data += str(kwargs)
+    return hashlib.md5(key_data.encode()).hexdigest()
 
 
 def cache_result(func):

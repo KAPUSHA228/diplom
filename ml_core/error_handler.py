@@ -1,4 +1,3 @@
-# ml_core/error_handler.py
 import logging
 import json
 import sys

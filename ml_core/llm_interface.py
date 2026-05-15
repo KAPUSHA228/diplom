@@ -1,12 +1,13 @@
 """
 Интерфейс к LLM для интерпретации результатов и анализа текстов
 """
+
 import json
 import os
 import pandas as pd
 
 import requests
-from typing import List, Dict, Any
+from typing import List, Dict
 
 
 class LLMInterface:
@@ -15,38 +16,33 @@ class LLMInterface:
     Поддерживает YandexGPT, GigaChat, OpenAI (опционально).
     """
 
-    def __init__(self, provider='yandex', api_key=None, folder_id=None):
+    def __init__(self, provider="yandex", api_key=None, folder_id=None):
         self.provider = provider
-        self.api_key = api_key or os.getenv('LLM_API_KEY')
-        self.folder_id = folder_id or os.getenv('YANDEX_FOLDER_ID')
+        self.api_key = api_key or os.getenv("LLM_API_KEY")
+        self.folder_id = folder_id or os.getenv("YANDEX_FOLDER_ID")
 
     def _call_yandex_gpt(self, prompt: str) -> str:
         """Вызов YandexGPT API"""
         url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 
-        headers = {
-            "Authorization": f"Api-Key {self.api_key}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Api-Key {self.api_key}", "Content-Type": "application/json"}
 
         data = {
             "modelUri": f"gpt://{self.folder_id}/yandexgpt-lite",
-            "completionOptions": {
-                "stream": False,
-                "temperature": 0.7,
-                "maxTokens": 2000
-            },
+            "completionOptions": {"stream": False, "temperature": 0.7, "maxTokens": 2000},
             "messages": [
-                {"role": "system",
-                 "text": "Ты — эксперт по социологическим данным. Отвечай на русском языке, четко и структурированно."},
-                {"role": "user", "text": prompt}
-            ]
+                {
+                    "role": "system",
+                    "text": "Ты — эксперт по социологическим данным. Отвечай на русском языке, четко и структурированно.",
+                },
+                {"role": "user", "text": prompt},
+            ],
         }
 
         response = requests.post(url, headers=headers, json=data)
 
         if response.status_code == 200:
-            return response.json()['result']['alternatives'][0]['message']['text']
+            return response.json()["result"]["alternatives"][0]["message"]["text"]
         else:
             return f"Ошибка LLM: {response.status_code}"
 
@@ -57,9 +53,9 @@ class LLMInterface:
 
     def complete(self, prompt: str) -> str:
         """Основной метод для вызова LLM"""
-        if self.provider == 'yandex':
+        if self.provider == "yandex":
             return self._call_yandex_gpt(prompt)
-        elif self.provider == 'gigachat':
+        elif self.provider == "gigachat":
             return self._call_gigachat(prompt)
         else:
             return "LLM не настроен"
@@ -112,8 +108,7 @@ class LLMInterface:
 
         return self.complete(prompt)
 
-    def generate_report(self, metrics: Dict, correlations: Dict,
-                        feature_importance: Dict, clusters_desc: str) -> str:
+    def generate_report(self, metrics: Dict, correlations: Dict, feature_importance: Dict, clusters_desc: str) -> str:
         """
         Генерация итогового отчета по результатам анализа.
         """
@@ -149,7 +144,7 @@ class LLMInterface:
         prompt = f"""
         Ты — эксперт по анализу социологических данных.
 
-        Данные содержат информацию о студентах: 
+        Данные содержат информацию о студентах:
         - социально-демографические характеристики
         - ценности (шкала Шварца)
         - креативность (тест Вильямса)
