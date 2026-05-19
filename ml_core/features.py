@@ -188,7 +188,7 @@ def select_features_for_model(x, y, top_n=7, final_n=5):
     f_scores = pd.Series(selector_f.scores_, index=x.columns)
 
     # Метод 2: Важность из Random Forest
-    rf = RandomForestClassifier(n_estimators=100, random_state=42)
+    rf = RandomForestClassifier(n_estimators=30, random_state=42, max_depth=15)
     rf.fit(x, y)
     rf_importance = pd.Series(rf.feature_importances_, index=x.columns)
 

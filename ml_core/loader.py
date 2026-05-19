@@ -5,7 +5,7 @@
 
 import pandas as pd
 from ml_core.config import optimize_dtypes
-
+import hashlib
 from ml_core.error_handler import logger
 
 # Служебные колонки (PII) — исключаем из превью полностью (и колонку, и данные)
@@ -95,7 +95,171 @@ def get_sheet_category(sheet_name: str) -> str:
     return "unknown"
 
 
-def detect_sheet_group(df: pd.DataFrame, sheet_name: str = None, sample_size: int = 1000) -> str:
+def load_excel_sheet(file_path: str, sheet_name: str) -> tuple:
+    """
+    Загружает, определяет тип и предобрабатывает один лист Excel.
+
+    Args:
+        file_path: путь к Excel-файлу
+        sheet_name: имя листа
+
+    Returns:
+        (df_processed, message): обработанный DataFrame и сообщение
+    """
+    df = pd.read_excel(file_path, sheet_name=sheet_name)
+    sheet_type = detect_sheet_type_by_columns(df.columns, sheet_name)
+    df_processed, msg = preprocess_sheet(df, sheet_type)
+    return df_processed, msg
+
+
+SHEET_TYPE_PATTERNS = {
+    "category1_numeric": {
+        "keywords": [
+            "Любознательность",
+            "Воображение",
+            "Сложность",
+            "Склонность к рискy",
+            "Сумма",
+            "Безопасность",
+            "Конформность",
+            "Традиция",
+            "Самостоятельность",
+            "Риск–новизна",
+            "Гедонизм",
+            "Достижение",
+            "Власть–богатство",
+            "Благожелательность",
+            "Универсализм",
+            "Пол",
+            "Возраст",
+            "Курс",
+            "ВУЗ",
+            "Направление подготовки",
+        ],
+        "min_matches": 3,
+        "group": "numeric",
+    },
+    "category2_mednik": {
+        "keywords": ["случайная;", "вечерняя;", "обратно;", "далеко;", "народная;"],
+        "min_matches": 3,
+        "group": "skip",
+    },
+    "category3_single_choice": {
+        "keywords": [
+            "Мне нравится работать в команде",
+            "организаторские способности",
+            "дисциплинированный",
+            "Оптимизм",
+            "Мне нравится что-то делать собственными руками",
+            "учиться чему-то новому",
+            "социальных сетях",
+            "тематический блог",
+            "зарабатываю в Интернете",
+            "Научно-исследовательские проекты",
+            "Спортивные соревнования",
+            "Волонтерская деятельность",
+            "КАК ВЫ УЧИТЕСЬ",
+            "СОБИРАЕТЕСЬ ЛИ ВЫ РАБОТАТЬ",
+            "В КАКОЙ СФЕРЕ ВЫ ХОТЕЛИ БЫ РАБОТАТЬ",
+        ],
+        "min_matches": 2,
+        "group": "single_choice",
+    },
+    "category4_multiple_choice": {
+        "keywords": ["Отметьте соответствующие варианты", "Выберите 7 – 10 самых значимых"],
+        "min_matches": 1,
+        "group": "multiple_choice",
+    },
+}
+
+
+def detect_sheet_type_by_columns(columns, sheet_name=None):
+    """
+    Определяет конкретный тип листа по содержимому колонок и имени.
+
+    Args:
+        columns: список имён колонок листа
+        sheet_name: опционально, имя листа
+
+    Returns:
+        str: тип листа ('williams', 'schwartz', 'demographics', ...)
+    """
+    # Игнорируем безымянные столбцы
+    cols = [str(col).strip().lower() for col in columns if not str(col).startswith("Unnamed")]
+
+    best_type = "unknown"
+    best_score = 0
+
+    for sheet_type, pattern in SHEET_TYPE_PATTERNS.items():
+        keywords = pattern["keywords"]
+        min_matches = pattern.get("min_matches", 1)
+        matched = sum(1 for kw in keywords if any(kw.lower() in col for col in cols))
+
+        if matched >= min_matches and matched > best_score:
+            best_score = matched
+            best_type = sheet_type
+
+    # Fallback: если не нашли, пробуем по имени листа
+    if best_type == "unknown" and sheet_name:
+        best_type = detect_sheet_type(sheet_name)
+
+    return best_type
+
+
+def detect_sheet_type(sheet_name: str) -> str:
+    """
+    Определяет тип листа по его имени (ключевые слова: williams, schwartz, соц...).
+
+    Args:
+        sheet_name: имя листа Excel
+
+    Returns:
+        str: тип листа ('williams', 'schwartz', 'demographics', ...)
+    """
+    sheet_lower = sheet_name.lower()
+
+    if "вильямс" in sheet_lower:
+        return "williams"
+    elif "шварц" in sheet_lower:
+        return "schwartz"
+    elif "соц" in sheet_lower:
+        if "соц14" in sheet_lower or "соцдем" in sheet_lower:
+            return "demographics"
+        elif "соц11" in sheet_lower or "соц12" in sheet_lower or "соц13" in sheet_lower:
+            return "career"
+        elif "соц9" in sheet_lower:
+            return "grades"
+        elif "соц8" in sheet_lower:
+            return "attitudes"
+        elif "соц4" in sheet_lower or "соц5" in sheet_lower or "соц6" in sheet_lower:
+            return "activities"
+        elif "соц3" in sheet_lower:
+            return "digital"
+        elif "соц2" in sheet_lower:
+            return "interests"
+        elif "соц1" in sheet_lower:
+            return "personality"
+        else:
+            return "social"
+
+    return "unknown"
+
+
+def get_sheet_names(file_path: str) -> list:
+    """
+    Возвращает список имён листов в Excel-файле.
+
+    Args:
+        file_path: путь к Excel-файлу
+
+    Returns:
+        list[str]: имена листов
+    """
+    xl = pd.ExcelFile(file_path)
+    return xl.sheet_names
+
+
+def detect_sheet_group(sheet_name: str = None) -> str:
     """
     Определяет группу листа по содержимому колонок (4 категории).
 
@@ -179,9 +343,14 @@ def get_sheet_preview(file_path: str, sheet_name: str) -> dict:
                             break
                     all_values.update(split_val)
                 col_info["unique_values"] = sorted(str(v) for v in all_values)
+
             else:
                 vals = [str(v) for v in df[col].dropna().unique()]
                 col_info["unique_values"] = sorted(set(vals))
+            unique_vals = col_info["unique_values"]
+            # Сортируем для стабильности, преобразуем в строку
+            signature_str = "|".join(sorted(str(v) for v in unique_vals))
+            col_info["value_signature"] = hashlib.md5(signature_str.encode()).hexdigest()
         else:
             col_info["unique_values"] = []
 

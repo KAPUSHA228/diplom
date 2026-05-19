@@ -53,8 +53,9 @@ class ExperimentTracker:
             "timestamp": datetime.now().isoformat(),
             "metrics": data.get("metrics", {}),
             "features": data.get("features", []),
-            "config": data.get("config", {}),  # <--- Сохраняем конфигурацию
+            "config": data.get("config", {}),
             "model_name": data.get("model_name", "unknown"),
+            "target_col": data.get("target_col", ""),
             "n_samples": data.get("n_samples", 0),
             "n_features": data.get("n_features", 0),
             "description": data.get("description", ""),
@@ -158,7 +159,9 @@ class ExperimentTracker:
         df = pd.DataFrame(experiments)
         df = df.sort_values("timestamp", ascending=False).head(limit)
 
-        return df[["id", "name", "timestamp", "model_name", "metrics"]]
+        return df[
+            ["id", "name", "timestamp", "model_name", "metrics", "features", "config", "target_col", "n_features"]
+        ]
 
     def delete_experiment(self, experiment_id: str) -> bool:
         """

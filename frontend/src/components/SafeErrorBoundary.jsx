@@ -1,4 +1,3 @@
-// components/SafeErrorBoundary.jsx
 import { Component } from "react";
 
 class SafeErrorBoundary extends Component {
@@ -26,15 +25,11 @@ class SafeErrorBoundary extends Component {
   }
 
   handleGoBack = () => {
-    const safePath =
-      sessionStorage.getItem("lastSafePath") || this.state.fallbackPath;
-    window.location.hash = safePath;
-    this.setState({ hasError: false, error: null, errorInfo: null });
+    window.history.back();
   };
 
-  handleReset = () => {
-    window.location.hash = this.state.fallbackPath;
-    window.location.reload(); // полный сброс
+  handleReload = () => {
+    window.location.reload();
   };
 
   render() {
@@ -56,12 +51,10 @@ class SafeErrorBoundary extends Component {
           <div
             style={{ display: "flex", gap: "1rem", justifyContent: "center" }}
           >
-            <button onClick={this.handleGoBack} className="primary">
-              ↩️ Вернуться назад
-            </button>
-            <button onClick={this.handleReset}>
-              🔄 Перезагрузить приложение
-            </button>
+            <p>
+              Возникла непредвиденная ошибка, попробуйте перезагрузить
+              веб-приложение или вернуться на прошлую вкладку
+            </p>
           </div>
         </div>
       );

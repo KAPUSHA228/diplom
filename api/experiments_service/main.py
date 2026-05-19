@@ -53,9 +53,10 @@ async def list_experiments(limit: int = 20):
     try:
         tracker = ExperimentTracker()
         experiments = tracker.list_experiments(limit=limit)
+        experiments_list = experiments.to_dict(orient="records") if not experiments.empty else []
         return {
-            "experiments": safe_json_serializable(experiments.to_dict("records")),
-            "total": len(experiments),
+            "experiments": safe_json_serializable(experiments_list),
+            "total": len(experiments_list),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -28,7 +28,7 @@ class ModelTrainer:
         os.makedirs(self.models_dir, exist_ok=True)
         self.models = {
             "LR": LogisticRegression(max_iter=1000, random_state=42),
-            "RF": RandomForestClassifier(n_estimators=100, random_state=42),
+            "RF": RandomForestClassifier(n_estimators=30, random_state=42, max_depth=15),
             "XGB": XGBClassifier(eval_metric="logloss", random_state=42),
         }
 
@@ -97,10 +97,17 @@ class ModelTrainer:
 
         return best_model, best_model_name, metrics
 
-    def train_models_parallel(self, X_train, y_train, X_test, y_test, scoring=None):
+    def train_models_parallel(self, X_train, y_train, X_test, y_test, scoring=None, cv_folds=5):
         """Параллельное обучение всех моделей"""
+        cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
 
         def train_single(name, model):
+            try:
+                cv_scores = cross_val_score(model, X_train, y_train, cv=cv, scoring=scoring or "f1")
+            except Exception as e:
+                print(f"CV failed for {name}: {e}")
+                cv_scores = [0.0] * cv_folds
+
             # Обучаем модель
             model.fit(X_train, y_train)
 
@@ -109,12 +116,13 @@ class ModelTrainer:
             proba = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else None
 
             # Метрики
-            from sklearn.metrics import f1_score, roc_auc_score, precision_score, recall_score
-
             metrics = {
                 "f1": f1_score(y_test, preds),
                 "precision": precision_score(y_test, preds),
                 "recall": recall_score(y_test, preds),
+                "cv_scores": cv_scores.tolist(),
+                "cv_mean": float(cv_scores.mean()),
+                "cv_std": float(cv_scores.std()),
             }
             if proba is not None:
                 metrics["roc_auc"] = roc_auc_score(y_test, proba)

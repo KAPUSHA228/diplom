@@ -1,12 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useDatasetLoader } from "../hooks/useDatasetLoader";
 
 export default function AnalysisSidebar({ onRun, busy, canRun = false }) {
+  const { data, loading } = useDatasetLoader();
   const [nClusters, setNClusters] = useState(3);
   const [riskThreshold, setRiskThreshold] = useState(0.5);
   const [corrThreshold, setCorrThreshold] = useState(0.3);
   const [useSmote, setUseSmote] = useState(true);
-
-  // Новые настройки (как в Streamlit)
   const [useHpTuning, setUseHpTuning] = useState(false);
   const [nIterTuning, setNIterTuning] = useState(20);
   const [optimizationMetric, setOptimizationMetric] = useState("default");
@@ -16,8 +16,52 @@ export default function AnalysisSidebar({ onRun, busy, canRun = false }) {
   const [useXGB, setUseXGB] = useState(true);
   const [shapTopN, setShapTopN] = useState(5);
 
+  const [rowCount, setRowCount] = useState(0);
+  const [isLargeDataset, setIsLargeDataset] = useState(false);
+  const [isVeryLargeDataset, setIsVeryLargeDataset] = useState(false);
+
+  useEffect(() => {
+    const count = data?.length || 0;
+    setRowCount(count);
+    setIsLargeDataset(count > 100000);
+    setIsVeryLargeDataset(count > 200000);
+  }, [data]);
+
+  const getRFWarning = () => {
+    if (!useRF) return null;
+    if (isVeryLargeDataset) {
+      return {
+        level: "error",
+        message: `⚠️ Ваш файл содержит ${rowCount.toLocaleString()} строк. Random Forest может обучаться 3-5 минут! Рекомендуется отключить.`,
+      };
+    }
+    if (isLargeDataset) {
+      return {
+        level: "warning",
+        message: `⚠️ Ваш файл содержит ${rowCount.toLocaleString()} строк. Random Forest может обучаться 1-2 минуты.`,
+      };
+    }
+    return null;
+  };
+
+  const rfWarning = getRFWarning();
+
+  // Предупреждение для SMOTE на больших данных
+  const getSmoteWarning = () => {
+    if (!useSmote) return null;
+    if (isVeryLargeDataset) {
+      return {
+        level: "warning",
+        message: `💡 SMOTE на ${rowCount.toLocaleString()} строках может занять ~6 секунд. При необходимости можно отключить.`,
+      };
+    }
+    return null;
+  };
+
+  const smoteWarning = getSmoteWarning();
+
   function handleSubmit() {
-    onRun({
+    const params = {
       n_clusters: nClusters,
       risk_threshold: riskThreshold,
       corr_threshold: corrThreshold,
@@ -30,13 +74,48 @@ export default function AnalysisSidebar({ onRun, busy, canRun = false }) {
       use_rf: useRF,
       use_xgb: useXGB,
       shap_top_n: shapTopN,
-    });
+    };
+    console.log("🔵 [Sidebar] useHpTuning =", params.useHpTuning);
+    console.log("🔵 [Sidebar] nIterTuning =", params.nIterTuning);
+    console.log("🔵 [AnalysisSidebar] Отправляемые параметры:", params);
+    onRun(params);
   }
 
+  if (loading) {
+    return (
+      <aside className="sidebar">
+        <h2>⚙️ Настройки анализа</h2>
+        <p className="muted">⏳ Загрузка данных...</p>
+      </aside>
+    );
+  }
   return (
     <aside className="sidebar">
       <h2>⚙️ Настройки анализа</h2>
-
+      {/* Индикатор размера данных */}
+      {rowCount > 0 && (
+        <div
+          className={`data-size-indicator ${isLargeDataset ? "large" : ""}`}
+          style={{
+            padding: "8px",
+            borderRadius: "6px",
+            marginBottom: "12px",
+            background: isLargeDataset
+              ? "rgba(255, 100, 100, 0.1)"
+              : "var(--bg-secondary)",
+            borderLeft: isLargeDataset ? "3px solid #ff6b6b" : "none",
+          }}
+        >
+          <span>📊 Размер данных: </span>
+          <strong>{rowCount.toLocaleString()}</strong>
+          <span> строк</span>
+          {isLargeDataset && (
+            <span style={{ color: "#ff6b6b", marginLeft: "8px" }}>
+              (большой датасет)
+            </span>
+          )}
+        </div>
+      )}
       <label>
         Число кластеров: <b>{nClusters}</b>
         <input
@@ -137,6 +216,30 @@ export default function AnalysisSidebar({ onRun, busy, canRun = false }) {
         />
         Random Forest
       </label>
+
+      {/* Предупреждение для RF */}
+      {rfWarning && (
+        <div
+          style={{
+            marginLeft: "24px",
+            marginTop: "4px",
+            marginBottom: "8px",
+            padding: "6px 10px",
+            borderRadius: "6px",
+            fontSize: "12px",
+            background:
+              rfWarning.level === "error"
+                ? "rgba(255, 100, 100, 0.15)"
+                : "rgba(255, 193, 7, 0.15)",
+            borderLeft:
+              rfWarning.level === "error"
+                ? "3px solid #ff6b6b"
+                : "3px solid #ffc107",
+          }}
+        >
+          {rfWarning.message}
+        </div>
+      )}
       <label className="checkbox-label">
         <input
           type="checkbox"
@@ -154,6 +257,21 @@ export default function AnalysisSidebar({ onRun, busy, canRun = false }) {
         />
         SMOTE (балансировка классов)
       </label>
+      {smoteWarning && (
+        <div
+          style={{
+            marginLeft: "24px",
+            marginTop: "4px",
+            padding: "6px 10px",
+            borderRadius: "6px",
+            fontSize: "12px",
+            background: "rgba(255, 193, 7, 0.15)",
+            borderLeft: "3px solid #ffc107",
+          }}
+        >
+          {smoteWarning.message}
+        </div>
+      )}
 
       <label className="checkbox-label">
         <input

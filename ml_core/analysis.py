@@ -139,16 +139,14 @@ def plot_clusters_pca(df, labels, features):
 
     X = df[features].fillna(df[features].median())
 
-    # Если признаков меньше 2 — не делаем PCA, просто рисуем точки по одному признаку
+    # Для 1 признака — строим гистограмму/ящик с усами
     if len(features) < 2:
-        fig = px.scatter(
+        fig = px.box(
             x=X.iloc[:, 0],
-            y=[0] * len(X),  # искусственная вторая ось
             color=labels,
-            title=f"Кластеризация (только 1 числовой признак: {features[0]})",
-            labels={"x": features[0], "y": " "},
+            title=f"Кластеризация (1 признак: {features[0]})",
+            labels={"x": features[0], "color": "Кластер"},
         )
-        fig.update_yaxes(visible=False)
         return fig
 
     scaler = StandardScaler()

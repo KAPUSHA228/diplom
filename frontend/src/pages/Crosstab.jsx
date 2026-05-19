@@ -71,9 +71,12 @@ export default function Crosstab() {
   }
 
   // Инициализация колонок при загрузке shared data
-  useState(() => {
-    if (hasShared && !fileData && !rowVar) initData(sharedData);
-  });
+  useEffect(() => {
+    if (hasShared && sharedData && !fileData && !rowVar) {
+      initData(sharedData);
+    }
+  }, [hasShared, sharedData, fileData, rowVar]);
+
   if (isLoading) {
     return (
       <div className="card">

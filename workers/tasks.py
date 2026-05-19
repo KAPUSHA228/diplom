@@ -1,89 +1,112 @@
 """
-Фоновые задачи Celery для обучения моделей и SHAP-объяснений.
+Фоновые задачи Ray для обучения моделей и SHAP-объяснений.
 """
 
 import os
 import sys
+import ray
+import pandas as pd
+from typing import Dict, Any, List
+import numpy as np
+from sklearn.model_selection import train_test_split
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import pandas as pd
-from celery_app import app_celery
 from ml_core.features import add_composite_features, get_base_features, preprocess_data_for_smote
 from ml_core.models import ModelTrainer
 from ml_core.evaluation import generate_shap_explanations
 from ml_core.error_handler import logger
-from celery import current_task
+
+# Глобальный флаг инициализации
+_ray_initialized = False
 
 
-def _cleanup(path):
-    """Удаление временного файла."""
+def ensure_ray():
+    """Гарантирует инициализацию Ray"""
+    global _ray_initialized
+    if not _ray_initialized and not ray.is_initialized():
+        ray.init(address="auto", ignore_reinit_error=True)
+        _ray_initialized = True
+    return ray.is_initialized()
+
+
+def serialize_figure(fig):
+    """Конвертирует Plotly фигуру в JSON"""
+    if fig is None:
+        return None
     try:
-        if os.path.exists(path):
-            os.unlink(path)
+        return fig.to_plotly_json()
     except Exception as e:
-        logger.warning(f"Failed to cleanup temp file {path}: {e}")
+        logger.error(f"Failed to serialize figure: {e}")
+        return None
 
 
-@app_celery.task(bind=True, name="workers.tasks.train_model_task")
-def train_model_task(self, data_path: str):
-    """
-    Задача обучения модели.
-    1. Загружает CSV.
-    2. Создает признаки.
-    3. Обучает лучшую модель.
-    4. Сохраняет модель.
-    """
-    self.update_state(state="PROGRESS", meta={"stage": "loading", "progress": 10})
+def init_ray():
+    """Инициализация Ray (вызывать при старте сервера)"""
+    ensure_ray()
+    print("✅ Ray инициализирован")
+
+
+@ray.remote
+class ProgressActor:
+    def __init__(self):
+        self.stage = "Начало"
+        self.progress = 0
+
+    def update(self, stage, progress):
+        self.stage = stage
+        self.progress = progress
+
+    def get(self):
+        return {"stage": self.stage, "progress": self.progress}
+
+
+@ray.remote
+def train_model_task(df_data: List[Dict[str, Any]], params: Dict[str, Any]) -> Dict[str, Any]:
+    """Обучение модели через Ray"""
+    ensure_ray()
 
     try:
-        # Чтение данных (попытка разных кодировок)
-        df = None
-        for encoding in ["utf-8", "cp1251"]:
-            try:
-                df = pd.read_csv(data_path, encoding=encoding)
-                break
-            except UnicodeDecodeError:
-                continue
-
-        if df is None:
-            # Фоллбэк на errors='ignore'
-            df = pd.read_csv(data_path, encoding="utf-8", errors="ignore")
-
-        self.update_state(state="PROGRESS", meta={"stage": "preprocessing", "progress": 30})
+        df = pd.DataFrame(df_data)
 
         # Обработка
         df = add_composite_features(df)
         feature_cols = get_base_features(df)
-        target_col = "risk_flag"
-
+        target_col = params.get("target_col", None)
+        print(f"🔍 Целевая переменная: {target_col}")
+        print(f"🔍 Признаки: {feature_cols}")
+        print(f"🔍 Целевая переменная в признаках? {target_col in feature_cols}")
+        if not target_col:
+            raise ValueError("target_col must be specified. Please select a target column in the UI.")
         # Если risk_flag нет, ищем другую бинарную цель
         if target_col not in df.columns:
             possible = [c for c in df.select_dtypes(include="number").columns if c not in feature_cols]
             target_col = possible[0] if possible else feature_cols[0]
+        if target_col in feature_cols:
+            print(f"⚠️ Удаляем целевую переменную '{target_col}' из признаков")
+            feature_cols.remove(target_col)
 
         X = df[feature_cols].fillna(df[feature_cols].median(numeric_only=True))
         y = df[target_col]
 
-        # АВТО-БИНАРИЗАЦИЯ: если target — это числа (continuous), делим по медиане
+        # Авто-бинаризация
         if y.dtype in ["float64", "int64"] and y.nunique() > 2:
             median_val = y.median()
             y = (y > median_val).astype(int)
 
-        # SMOTE (если нужно)
+        # Разделение на train/test
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+        # SMOTE
         if y.nunique() > 1 and y.min() == 0 and y.max() == 1:
             try:
-                X, y = preprocess_data_for_smote(X, y)
+                X_train, y_train = preprocess_data_for_smote(X_train, y_train)
             except Exception as e:
-                logger.info(f"SMOTE preprocessing failed: {e}. Continuing without SMOTE.")
-
-        self.update_state(state="PROGRESS", meta={"stage": "training", "progress": 60})
+                logger.info(f"SMOTE preprocessing failed: {e}.  Continuing without SMOTE.")
 
         # Обучение
         trainer = ModelTrainer()
-        model, model_name, metrics = trainer.train_best_model(X, y)
-
-        self.update_state(state="PROGRESS", meta={"stage": "saving", "progress": 90})
+        model, model_name, metrics = trainer.train_best_model(X_train, y_train, X_test, y_test)
 
         # Сохранение
         model_path, meta = trainer.save_model(model, model_name, metrics, feature_cols)
@@ -97,38 +120,50 @@ def train_model_task(self, data_path: str):
 
     except Exception as e:
         logger.error(f"Training failed: {e}")
-        raise
-    finally:
-        _cleanup(data_path)
+        return {"status": "error", "error": str(e)}
 
 
-@app_celery.task(bind=True, name="workers.tasks.shap_task")
-def shap_task(self, model_id: str, data_path: str, threshold: float = 0.5):
-    """
-    Задача генерации SHAP-объяснений.
-    """
-    self.update_state(state="PROGRESS", meta={"stage": "loading_model", "progress": 20})
+@ray.remote
+def correlation_task(data: list, target_col: str = None):
+    """Асинхронная корреляция для больших данных"""
+    import pandas as pd
+
+    df = pd.DataFrame(data)
+
+    # Берём только числовые колонки
+    numeric_df = df.select_dtypes(include=[np.number])
+
+    if target_col and target_col in numeric_df.columns:
+        # Вычисляем корреляции только с целевой колонкой (быстрее)
+        correlations = numeric_df.corr()[target_col].sort_values(ascending=False)
+        return {
+            "correlations": correlations.to_dict(),
+            "target_col": target_col,
+            "n_rows": len(df),
+            "n_columns": len(numeric_df.columns),
+        }
+    else:
+        # Полная матрица
+        corr_matrix = numeric_df.corr()
+        return {"correlation_matrix": corr_matrix.to_dict(), "n_rows": len(df), "n_columns": len(numeric_df.columns)}
+
+
+@ray.remote
+def shap_task(model_id: str, df_data: List[Dict[str, Any]], threshold: float = 0.5) -> Dict[str, Any]:
+    """SHAP объяснения через Ray"""
+    ensure_ray()
 
     try:
+        df = pd.DataFrame(df_data)
         trainer = ModelTrainer()
+
         # Загрузка модели
         model = trainer.load_model(model_name=model_id)
-
         if model is None:
-            # Пытаемся загрузить любую последнюю модель
             model, model_name, meta = trainer.get_best_model()
             if model is None:
-                raise FileNotFoundError(
-                    f"Model '{model_id}' not found and no saved models available. "
-                    "Please train a model first using /api/v1/ml/train."
-                )
-            logger.info(f"Model '{model_id}' not found, using latest: {model_name}")
-
-        self.update_state(state="PROGRESS", meta={"stage": "loading_data", "progress": 40})
-
-        df = pd.read_csv(data_path)
-
-        self.update_state(state="PROGRESS", meta={"stage": "computing_shap", "progress": 70})
+                return {"status": "error", "error": f"Model '{model_id}' not found"}
+            logger.info(f"Using latest model: {model_name}")
 
         feature_cols = [c for c in df.columns if c not in ["risk_flag", "user_id", "user"]]
         X = df[feature_cols].fillna(df[feature_cols].median(numeric_only=True))
@@ -143,20 +178,20 @@ def shap_task(self, model_id: str, data_path: str, threshold: float = 0.5):
 
     except Exception as e:
         logger.error(f"SHAP generation failed: {e}")
-        raise
-    finally:
-        _cleanup(data_path)
+        return {"status": "error", "error": str(e)}
 
 
-@app_celery.task(bind=True, name="workers.tasks.full_analysis_task")
-def full_analysis_task(self, data: list, params: dict):
-    """
-    Асинхронный полный анализ (ML + SHAP + графики).
-    """
+@ray.remote
+def full_analysis_task(
+    data: List[Dict[str, Any]], params: Dict[str, Any], progress_actor: ray.actor.ActorHandle = None
+) -> Dict[str, Any]:
+    """Полный анализ через Ray"""
+    ensure_ray()
 
     def report_progress(stage, progress):
-        print(f"🔵🔵🔵 REPORT_PROGRESS CALLED: {stage} - {progress}%")
-        self.update_state(state="PROGRESS", meta={"stage": stage, "progress": progress})
+        if progress_actor:
+            progress_actor.update.remote(stage, progress)
+        print(f"📊 {stage}: {progress}%")
 
     try:
         # ПРОВЕРКА 1: Вызываем report_progress ДО анализа
@@ -166,6 +201,22 @@ def full_analysis_task(self, data: list, params: dict):
 
         # ПРОВЕРКА 2: Ещё один вызов
         report_progress("ЗАГРУЗКА ДАННЫХ (тест)", 5)
+        target_col = params.get("target_col", "risk_flag")
+
+        # ✅ ПРОВЕРКА: есть ли хоть один признак (кроме целевой переменной)
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        non_target_cols = [c for c in numeric_cols if c != target_col]
+
+        if not non_target_cols:
+            error_msg = (
+                f"❌ Анализ невозможен: в данных нет признаков для анализа.\n"
+                f"Была выбрана целевая переменная '{target_col}', "
+                "но после её исключения не осталось числовых колонок.\n"
+                f"Доступные колонки: {list(df.columns)}\n"
+                "Добавьте в файл хотя бы один числовой признак."
+            )
+            logger.error(error_msg)
+            return {"status": "error", "error": error_msg}
 
         from ml_core.analyzer import ResearchAnalyzer
 
@@ -191,21 +242,90 @@ def full_analysis_task(self, data: list, params: dict):
             n_iter_tuning=params.get("n_iter_tuning", 20),
             progress_callback=report_progress,
         )
+        opt_metric = params.get("optimization_metric")
 
+        if opt_metric is None or opt_metric == "default":
+            display_metric = "F1 (по умолчанию)"
+        elif opt_metric == "f1":
+            display_metric = "F1-score"
+        elif opt_metric == "roc_auc":
+            display_metric = "ROC-AUC"
+        elif opt_metric == "precision":
+            display_metric = "Precision"
+        elif opt_metric == "recall":
+            display_metric = "Recall"
+        else:
+            display_metric = opt_metric
         # Сериализуем результат (очищаем от numpy типов)
         from shared.utils import safe_json_serializable
 
+        result_dict = {
+            "status": result.status,
+            "message": result.message,
+            "metrics": result.metrics,
+            "test_metrics": result.test_metrics,
+            "cv_results": result.cv_results,
+            "selected_features": result.selected_features,
+            "cluster_profiles": result.cluster_profiles,
+            "explanations": result.explanations,
+            "predictions": result.predictions,
+            # "data_with_clusters": result.data_with_clusters,
+            "target_col": result.target_col,
+            "config": {
+                "model_name": result.model_name,
+                "target_col": result.target_col,
+                "n_samples": len(df),
+                "n_features": len(result.selected_features),
+                "n_clusters": params.get("n_clusters"),
+                "use_smote": params.get("use_smote"),
+                "corr_threshold": params.get("corr_threshold"),
+                "optimization_metric": display_metric,
+                "risk_threshold": params.get("risk_threshold"),
+                "shap_top_n": params.get("shap_top_n"),
+                "use_lr": params.get("use_lr"),
+                "use_rf": params.get("use_rf"),
+                "use_xgb": params.get("use_xgb"),
+                "use_hp_tuning": params.get("use_hp_tuning"),
+                "n_iter_tuning": params.get("n_iter_tuning"),
+            },
+            # Сериализуем графики
+            "fig_cm": serialize_figure(result.fig_cm),
+            "fig_roc": serialize_figure(result.fig_roc),
+            "fig_fi": serialize_figure(result.fig_fi),
+            "fig_clusters": serialize_figure(result.fig_clusters),
+            "fig_corr": serialize_figure(result.fig_corr),
+        }
         report_progress("АНАЛИЗ ЗАВЕРШЁН (тест)", 100)
-        serialized_result = safe_json_serializable(result.__dict__)
+        print("🔵🔵🔵 ОТЛАДКА ГРАФИКОВ 🔵🔵🔵")
+        print(f"fig_cm type: {type(result.fig_cm)}")
+        print(f"fig_cm is None: {result.fig_cm is None}")
 
+        if result.fig_cm is not None:
+            try:
+                test_json = result.fig_cm.to_plotly_json()
+                print(f"fig_cm JSON keys: {test_json.keys() if test_json else 'None'}")
+                print(f"fig_cm has data: {len(test_json.get('data', [])) if test_json else 0}")
+            except Exception as e:
+                print(f"fig_cm serialization error: {e}")
+        print("🔵 НАЧАЛО СЕРИАЛИЗАЦИИ РЕЗУЛЬТАТА")
+        import time
+
+        start_serialize = time.time()
+
+        serialized_result = safe_json_serializable(result_dict)
+        print(f"🔵 serialized_result keys: {serialized_result.keys()}")
+        print(f"🔵 serialized_result has fig_cm: {'fig_cm' in serialized_result}")
+        print(f"🔵 serialized_result fig_cm: {serialized_result.get('fig_cm')}")
+        print(f"🔵 СЕРИАЛИЗАЦИЯ ЗАВЕРШЕНА за {time.time() - start_serialize:.2f} сек")
+        print(f"🔵 РАЗМЕР РЕЗУЛЬТАТА: {len(str(serialized_result)) / 1024 / 1024:.2f} MB")
         return {
             "status": "success",
-            "result": serialized_result,
+            **serialized_result,
             "target_col": params.get("target_col", "risk_flag"),
         }
 
     except Exception as e:
-        current_task.update_state(
-            state="FAILURE", meta={"stage": f"❌ Ошибка: {str(e)}", "progress": 0, "error": str(e)}
-        )
-        raise
+        logger.error(f"Full analysis failed: {e}")
+        if progress_actor:
+            progress_actor.update.remote(f"Ошибка: {str(e)}", 0)
+        return {"status": "error", "error": str(e)}

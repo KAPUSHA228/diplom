@@ -149,9 +149,10 @@ def generate_shap_explanations(
     threshold: float = 0.5,
     top_n: int = 5,
     target_name: str = "Целевая переменная",
+    n_students: int = 5,
 ):
     """
-    Генерирует SHAP-объяснения для первых 15 наблюдений.
+    Генерирует SHAP-объяснения для первых 5 наблюдений.
 
     Args:
         model: обученная модель (XGBoost/RF/LogisticRegression)
@@ -160,38 +161,49 @@ def generate_shap_explanations(
         threshold: порог классификации для определения уровня
         top_n: число объяснений для возврата
         target_name: имя целевой переменной для текстовых объяснений
+        n_students: количество студентов для объяснения (по умолчанию 5)
 
     Returns:
         list[dict]: [{'student_index', 'risk_probability', 'risk_level', 'explanation'}]
     """
     try:
+        # 1. Получаем вероятности риска
+        proba = model.predict_proba(X)[:, 1]
+
+        # 2. Берём топ-N самых рискованных студентов
+        n_to_show = min(n_students, len(X))
+        top_indices = np.argsort(proba)[-n_to_show:][::-1]
+
+        logger.info(f"SHAP: выбрано {len(top_indices)} студентов из {len(X)} (топ по риску)")
+
         # Единый способ создания explainer
         if isinstance(model, (XGBClassifier, RandomForestClassifier)):
             explainer = shap.TreeExplainer(model)
         else:
             explainer = shap.LinearExplainer(model, X) if hasattr(model, "coef_") else shap.Explainer(model)
 
-        shap_values = explainer.shap_values(X)
+            # 4. Вычисляем SHAP значения ТОЛЬКО для выбранных студентов (экономия времени!)
+        X_selected = X.iloc[top_indices]
+        shap_values = explainer.shap_values(X_selected)
 
-        # Приведение к единому формату (для класса 1)
-        if isinstance(shap_values, list) and len(shap_values) == 2:  # TreeExplainer для бинарной классификации
+        # 5. Приведение к единому формату (для класса 1)
+        if isinstance(shap_values, list) and len(shap_values) == 2:
             shap_values = shap_values[1]
         elif hasattr(shap_values, "shape") and len(shap_values.shape) == 3:
             shap_values = shap_values[:, :, 1] if shap_values.shape[2] > 1 else shap_values[:, :, 0]
 
+        # 6. Формируем объяснения
         explanations = []
-        for i in range(min(len(X), 15)):  # ограничиваем для производительности
-            risk_prob = float(model.predict_proba(X.iloc[[i]])[0, 1])
+        for idx, (orig_idx, shap_row) in enumerate(zip(top_indices, shap_values)):
+            risk_prob = proba[orig_idx]
 
-            # shap_values может быть ndarray
-            shap_row = shap_values[i] if len(shap_values.shape) == 2 else shap_values[i]
-
+            # Сортируем признаки по влиянию
             feature_effects = list(zip(feature_names, shap_row))
             feature_effects.sort(key=lambda x: abs(x[1]), reverse=True)
 
             explanation = {
-                "student_index": i,
-                "risk_probability": risk_prob,
+                "student_index": int(orig_idx),
+                "risk_probability": float(risk_prob),
                 "risk_level": "высокое" if risk_prob > threshold else "низкое",
                 "top_features": [
                     {

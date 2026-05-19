@@ -2,16 +2,14 @@
 ML Service — предсказания, обучение моделей, SHAP.
 """
 
-import tempfile
-
 from fastapi import FastAPI, UploadFile, File
 from typing import Dict, Any
-
-from celery_app import app_celery as celery_app
+import ray
+from ray.exceptions import RayTaskError
 from ml_core.error_handler import logger
-from workers.tasks import train_model_task, shap_task, full_analysis_task
+from workers.tasks import train_model_task, shap_task, init_ray, full_analysis_task, ProgressActor, correlation_task
 from ml_core.models import ModelTrainer
-
+from contextlib import asynccontextmanager
 from fastapi import APIRouter, HTTPException
 import pandas as pd
 from ml_core.analyzer import ResearchAnalyzer
@@ -24,16 +22,38 @@ from .schemas import (
     SubsetRequest,
     CompositeRequest,
 )
-from datetime import datetime, timedelta
 from shared.utils import safe_json_serializable
 from shared.utils import scrub
 from api.ml_service.websocket import router as websocket_router
 
+# Хранилище активных задач (для отмены)
+active_tasks = {}
+active_progress = {}
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
-_task_cache = {}
 CACHE_TTL = 3600
 
-app = FastAPI(title="ML Service", description="ML модели и обучение", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- Код, который выполняется ПРИ ЗАПУСКЕ (Startup) ---
+    print("🟢 Приложение запускается...")
+    # Инициализируем Ray
+    init_ray()
+    progress_actor = ProgressActor.remote()
+    app.state.progress_actor = progress_actor
+    print("✅ Ray инициализирован")
+
+    # Передаём управление приложению
+    yield
+
+    # --- Код, который выполняется ПРИ ОСТАНОВКЕ (Shutdown) ---
+    print("🔴 Приложение останавливается...")
+    # Здесь можно добавить код для graceful shutdown Ray, если нужно
+    # например, ray.shutdown() — но обычно не требуется, т.к. Ray живёт отдельно
+
+
+app = FastAPI(title="ML Service", description="ML модели и обучение", version="1.0.0", lifespan=lifespan)
+
 # Два роутера: не переиспользовать одну переменную — иначе теряются маршруты первого префикса.
 router_ml = APIRouter(prefix="/api/v1/ml")
 router_analyze_ml = APIRouter(prefix="/api/v1/analyze")
@@ -42,26 +62,20 @@ router_analyze_ml = APIRouter(prefix="/api/v1/analyze")
 trainer = ModelTrainer()
 
 
-def clean_expired_cache():
-    now = datetime.now()
-    expired = [tid for tid, (_, ts) in _task_cache.items() if now - ts > timedelta(seconds=CACHE_TTL)]
-    for tid in expired:
-        del _task_cache[tid]
-
-
 @router_ml.post("/train_async")
 async def train_async_json(data: Dict[str, Any]):
-    """Запуск асинхронного обучения (принимает JSON)."""
+    """Запуск асинхронного обучения через Ray"""
     if "df" not in data or not data["df"]:
         raise HTTPException(400, "Data is empty or invalid format")
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as f:
-        df = pd.DataFrame(data["df"])
-        df.to_csv(f, index=False)
-        tmp_path = f.name
-
-    task = train_model_task.delay(tmp_path)
-    return {"task_id": task.id, "status": "started"}
+    target_col = data.get("target_col", None)
+    try:
+        task_ref = train_model_task.remote(data["df"], {"target_col": target_col})
+        task_id = task_ref.hex()
+        active_tasks[task_id] = task_ref
+        return {"task_id": task_id, "status": "started"}
+    except Exception as e:
+        logger.error(f"Failed to start training: {e}")
+        raise HTTPException(500, str(e))
 
 
 @router_ml.post("/predict", response_model=PredictResponse)
@@ -98,39 +112,42 @@ async def predict(request: PredictRequest):
 
 @router_ml.post("/train", response_model=TrainResponse)
 async def train_model(file: UploadFile = File(...)):
-    """Запуск обучения модели в фоне через Celery."""
+    """Запуск обучения модели в фоне через Ray."""
     content = await file.read()
 
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(400, f"File too large: {len(content) / 1024 / 1024:.1f} MB")
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
+    import io
 
-    task = train_model_task.delay(tmp_path)
-    return TrainResponse(task_id=task.id, status="started")
+    df = pd.read_csv(io.BytesIO(content))
+    df_data = df.to_dict(orient="records")
+
+    task_ref = train_model_task.remote(df_data, {})
+    task_id = task_ref.hex()
+    active_tasks[task_id] = task_ref
+    return TrainResponse(task_id=task_id, status="started")
 
 
 @router_ml.get("/train/{task_id}", response_model=TaskStatus)
 async def get_train_status(task_id: str):
     """Получить статус задачи обучения."""
-    try:
-        from celery.result import AsyncResult
-
-        res = AsyncResult(task_id, app=celery_app)
-        response = {"task_id": task_id, "status": res.status}
-
-        if res.status == "SUCCESS":
-            response["result"] = res.result
-        elif res.status == "FAILURE":
-            response["error"] = str(res.result)
-        elif res.status == "PROGRESS":
-            response.update(res.result)
-
-        return response
-    except Exception:
+    if task_id not in active_tasks:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    obj_ref = active_tasks[task_id]
+    ready, _ = ray.wait([obj_ref], timeout=0)
+
+    if ready:
+        try:
+            result = ray.get(obj_ref)
+            del active_tasks[task_id]
+            return {"task_id": task_id, "status": "SUCCESS", "result": result}
+        except Exception as e:
+            del active_tasks[task_id]
+            return {"task_id": task_id, "status": "FAILURE", "error": str(e)}
+
+    return {"task_id": task_id, "status": "PROGRESS"}
 
 
 @router_ml.get("/tasks/{task_id}", response_model=TaskStatus)
@@ -147,12 +164,16 @@ async def generate_shap(file: UploadFile = File(...), model_id: str = "XGB"):
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(400, f"File too large: {len(content) / 1024 / 1024:.1f} MB")
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
+    # Читаем CSV из файла
+    import io
 
-    task = shap_task.delay(model_id, tmp_path)
-    return TrainResponse(task_id=task.id, status="started")
+    df = pd.read_csv(io.BytesIO(content))
+    df_data = df.to_dict(orient="records")
+
+    task_ref = shap_task.remote(model_id, df_data)
+    task_id = str(task_ref)
+    active_tasks[task_id] = task_ref
+    return TrainResponse(task_id=task_id, status="started")
 
 
 # Один экземпляр анализатора на всё приложение
@@ -165,6 +186,21 @@ async def full_analysis(request: AnalysisRequest):
         df = pd.DataFrame(request.df)
 
         target = request.target_col
+        opt_metric = request.optimization_metric
+
+        if not opt_metric or opt_metric == "default" or opt_metric == "null" or opt_metric == "Null":
+            display_metric = "F1 (по умолчанию)"
+        elif opt_metric == "f1":
+            display_metric = "F1-score"
+        elif opt_metric == "roc_auc":
+            display_metric = "ROC-AUC"
+        elif opt_metric == "precision":
+            display_metric = "Precision"
+        elif opt_metric == "recall":
+            display_metric = "Recall"
+        else:
+            display_metric = opt_metric
+
         if not target or target not in df.columns:
             # Ищем первую числовую колонку (исключая ID)
             num_cols = df.select_dtypes(include="number").columns
@@ -172,7 +208,9 @@ async def full_analysis(request: AnalysisRequest):
             possible = [c for c in num_cols if not any(x in c.lower() for x in exclude)]
             target = possible[0] if possible else num_cols[0]
         # Передаем все параметры, которые пришли от фронтенда
-        print(f"DEBUG full_analysis: n_clusters={request.n_clusters}, target={target}")
+        print(
+            f"DEBUG full_analysis: n_clusters={request.n_clusters}, target={target}, metrics={display_metric}, use_hp_tuning: {request.use_hp_tuning}, n_iter_tuning: {request.n_iter_tuning}"
+        )
         result = analyzer.run_full_analysis(
             df=df,
             target_col=target,
@@ -184,7 +222,7 @@ async def full_analysis(request: AnalysisRequest):
             use_lr=request.use_lr,
             use_rf=request.use_rf,
             use_xgb=request.use_xgb,
-            optimization_metric=request.optimization_metric,
+            optimization_metric=display_metric,
             n_features_to_select=getattr(request, "n_features_to_select", None),
             shap_top_n=getattr(request, "shap_top_n", 5),
             use_hp_tuning=getattr(request, "use_hp_tuning", False),
@@ -233,7 +271,7 @@ async def full_analysis(request: AnalysisRequest):
             "n_clusters": request.n_clusters,
             "use_smote": request.use_smote,
             "corr_threshold": request.corr_threshold,
-            "optimization_metric": request.optimization_metric,
+            "optimization_metric": display_metric,
         }
         print(f"🔵🔵🔵 ПЕРЕД RETURN: target = {target}")
         print(f"🔵🔵🔵 ТИП target = {type(target)}")
@@ -250,7 +288,6 @@ async def full_analysis(request: AnalysisRequest):
             "predictions": safe_json_serializable(predictions),
             "data_with_clusters": result.data_with_clusters,
             "target_col": target,
-            # Передаем графики
             "fig_cm": plot_to_json(result.fig_cm),
             "fig_roc": plot_to_json(result.fig_roc),
             "fig_fi": plot_to_json(result.fig_fi),
@@ -319,44 +356,126 @@ async def select_subset(request: SubsetRequest):
 
 @router_ml.post("/full_async")
 async def full_analysis_async(request: AnalysisRequest):
-    """Запуск полного анализа в фоне через Celery."""
-    task = full_analysis_task.delay(request.df, request.dict())
-    return {"task_id": task.id, "status": "started"}
+    """Запуск полного анализа через Ray"""
+    try:
+        # Создаём Actor для прогресса
+        progress_actor = ProgressActor.remote()
+        print("🔵 в async [BACKEND] Получен запрос:")
+        print(f"  - use_hp_tuning: {request.use_hp_tuning}")
+        print(f"  - n_iter_tuning: {request.n_iter_tuning}")
+        print(f"  - target_col: {request.target_col}")
+        # Запускаем задачу
+        obj_ref = full_analysis_task.remote(request.df, request.dict(), progress_actor)
+
+        # Генерируем ID (можно использовать hex из ObjectRef)
+        task_id = obj_ref.hex()
+        active_tasks[task_id] = obj_ref
+        active_progress[task_id] = progress_actor
+
+        return {"task_id": task_id, "status": "started"}
+    except Exception as e:
+        logger.error(f"Failed to start task: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router_ml.post("/correlation_async")
+async def correlation_async(data: Dict[str, Any]):
+    """Асинхронная корреляция для больших данных"""
+    try:
+        df_data = data.get("df")
+        target_col = data.get("target_col")
+
+        if not df_data:
+            raise HTTPException(400, "No data provided")
+
+        task_ref = correlation_task.remote(df_data, target_col)
+        task_id = task_ref.hex()
+        active_tasks[task_id] = task_ref
+
+        return {"task_id": task_id, "status": "started"}
+
+    except Exception as e:
+        logger.error(f"Failed to start correlation: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router_ml.get("/correlation_async/{task_id}")
+async def get_correlation_status(task_id: str):
+    """Статус асинхронной корреляции"""
+    if task_id not in active_tasks:
+        return {"task_id": task_id, "status": "UNKNOWN"}
+
+    obj_ref = active_tasks[task_id]
+    ready, _ = ray.wait([obj_ref], timeout=0)
+
+    if ready:
+        try:
+            result = ray.get(obj_ref)
+            del active_tasks[task_id]
+            return {"task_id": task_id, "status": "SUCCESS", "result": result}
+        except Exception as e:
+            del active_tasks[task_id]
+            return {"task_id": task_id, "status": "FAILURE", "error": str(e)}
+
+    return {"task_id": task_id, "status": "PROGRESS"}
 
 
 @router_ml.get("/full_async/{task_id}")
 async def get_full_analysis_status(task_id: str):
     """Статус фонового анализа."""
-    from celery.result import AsyncResult
-    from celery_app import app_celery
+    if task_id not in active_tasks:
+        return {"task_id": task_id, "status": "UNKNOWN"}
 
-    # Проверяем кэш
-    if task_id in _task_cache:
-        result, timestamp = _task_cache[task_id]
-        # Возвращаем результат с заголовком, что это из кэша
+    obj_ref = active_tasks[task_id]
 
-        return {"task_id": task_id, "status": "SUCCESS", "result": result, "_cached": True}
+    # Проверяем готовность
+    ready_refs, _ = ray.wait([obj_ref], timeout=0)
 
-    result = AsyncResult(task_id, app=app_celery)
-    print(f"🔵 STATUS CHECK: task_id={task_id}, status={result.status}")
-    response = {"task_id": task_id, "status": result.status}
+    # Получаем прогресс из Actor
+    progress = None
+    if task_id in active_progress:
+        try:
+            progress = ray.get(active_progress[task_id].get.remote())
+        except Exception:
+            pass
 
-    if result.status == "SUCCESS":
-        response["result"] = result.result.get("result")
-        # Сохраняем в кэш для быстрых повторных запросов
-        _task_cache[task_id] = (response["result"], datetime.now())
-        # Очищаем старые записи
-        clean_expired_cache()
+    if ready_refs:
+        import time
 
-    elif result.status == "FAILURE":
-        response["error"] = str(result.result)
+        start_get = time.time()
+        try:
+            result = ray.get(obj_ref)
+            print(f"🔵 RAY.GET ЗАВЕРШЕН за {time.time() - start_get:.2f} сек")
+            print(f"🔵 РАЗМЕР РЕЗУЛЬТАТА: {len(str(result)) / 1024 / 1024:.2f} MB")
+            del active_tasks[task_id]
+            if task_id in active_progress:
+                del active_progress[task_id]
+            return {"task_id": task_id, "status": "SUCCESS", "result": result}
+        except RayTaskError as e:
+            del active_tasks[task_id]
+            if task_id in active_progress:
+                del active_progress[task_id]
+            return {"task_id": task_id, "status": "FAILURE", "error": str(e)}
 
-    elif result.status == "PROGRESS":
-        meta = result.result or {}
-        print(f"🔵 PROGRESS META: {meta}")
-        response["stage"] = meta.get("stage", "Выполняется...")
-        response["progress"] = meta.get("progress", 0)
-    return response
+    # Задача ещё выполняется
+    return {
+        "task_id": task_id,
+        "status": "PROGRESS",
+        "stage": progress.get("stage", "Выполняется...") if progress else "Выполняется...",
+        "progress": progress.get("progress", 0) if progress else 0,
+    }
+
+
+@router_ml.post("/full_async/{task_id}/cancel")
+async def cancel_full_analysis(task_id: str):
+    """Отмена задачи"""
+    if task_id in active_tasks:
+        ray.cancel(active_tasks[task_id])
+        del active_tasks[task_id]
+        if task_id in active_progress:
+            del active_progress[task_id]
+        return {"status": "cancelled", "message": f"Task {task_id} cancelled"}
+    return {"status": "not_found", "message": "Task not found"}
 
 
 app.include_router(router_ml)

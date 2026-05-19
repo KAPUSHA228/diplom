@@ -236,13 +236,20 @@ export async function getTaskStatus(taskId) {
   return request(`/api/v1/ml/tasks/${taskId}`);
 }
 
-export async function uploadForCorrelation(file, sheetName = null) {
-  const form = new FormData();
-  form.append("file", file);
-  if (sheetName) form.append("sheet_name", sheetName);
-  return request("/api/v1/analyze/correlation", { method: "POST", body: form });
+export async function cancelFullAnalysis(taskId) {
+  return request(`/api/v1/ml/full_async/${taskId}/cancel`, { method: "POST" });
 }
 
+export async function runCorrelationAsync(data, targetCol = null) {
+  return request("/api/v1/ml/correlation_async", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ df: data, target_col: targetCol }),
+  });
+}
+export async function getCorrelationStatus(taskId) {
+  return request(`/api/v1/ml/correlation_async/${taskId}`);
+}
 // ==================== Новые эндпоинты (endpoints.py) ====================
 
 /** Полный анализ через ResearchAnalyzer */
@@ -464,32 +471,43 @@ export async function forecastStudent(
 // ==================== Асинхронные задачи (Celery) ====================
 
 /** Запуск обучения в фоне (принимает JSON) */
-export async function trainAsyncJson(data) {
+export async function trainAsyncJson(data, targetCol = "risk_flag") {
   return request("/api/v1/ml/train_async", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ df: data }),
+    body: JSON.stringify({ df: data, target_col: targetCol }),
   });
 }
 
 export async function runFullAnalysisAsync(data, params = {}) {
+  console.log("🔵 [API] Получены params:", params);
+  console.log("🔵 [API] use_hp_tuning =", params.use_hp_tuning);
+  console.log("🔵 [API] n_iter_tuning =", params.n_iter_tuning);
+  const body = {
+    df: data,
+    target_col: params.target_col || "risk_flag",
+    n_clusters: params.n_clusters || 3,
+    risk_threshold: params.risk_threshold || 0.5,
+    corr_threshold: params.corr_threshold || 0.3,
+    use_smote: params.use_smote !== undefined ? params.use_smote : true,
+    n_features_to_select: params.n_features_to_select || 7,
+    is_synthetic: params.is_synthetic || false,
+    use_hp_tuning: params.use_hp_tuning === true,
+    n_iter_tuning: params.n_iter_tuning || 20,
+    optimization_metric:
+      params.optimization_metric !== "default"
+        ? params.optimization_metric
+        : null,
+    shap_top_n: params.shap_top_n || 5,
+    use_lr: params.use_lr !== undefined ? params.use_lr : true,
+    use_rf: params.use_rf !== undefined ? params.use_rf : true,
+    use_xgb: params.use_xgb !== undefined ? params.use_xgb : true,
+  };
+  console.log("🔵 [API] Отправляем JSON в бэкенд:", body);
   return request("/api/v1/ml/full_async", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      df: data,
-      target_col: params.target_col || "risk_flag",
-      n_clusters: params.n_clusters || 3,
-      corr_threshold: params.corr_threshold || 0.3,
-      use_smote: params.use_smote !== undefined ? params.use_smote : true,
-      use_lr: params.use_lr !== undefined ? params.use_lr : true,
-      use_rf: params.use_rf !== undefined ? params.use_rf : true,
-      use_xgb: params.use_xgb !== undefined ? params.use_xgb : true,
-      optimization_metric:
-        params.optimization_metric !== "default"
-          ? params.optimization_metric
-          : null,
-    }),
+    body: JSON.stringify(body),
   });
 }
 

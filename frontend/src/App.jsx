@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState, lazy, useRef } from "react";
 import { HashRouter, Routes, Route, Link, useLocation } from "react-router-dom";
-//import ErrorBoundary from "./components/ErrorBoundary";
+import SafeErrorBoundary from "./components/SafeErrorBoundary";
 import {
   healthcheck,
-  uploadForCorrelation,
   getExcelPreview,
   processExcel,
   trainAsyncJson,
@@ -11,37 +10,28 @@ import {
   saveExperiment,
   getFullAnalysisStatus,
   runFullAnalysisAsync,
+  cancelFullAnalysis,
+  runCorrelationAsync,
+  getCorrelationStatus,
 } from "./api";
 // Все компоненты, которые не видны сразу, загружаем лениво
-const AnalysisSidebar = lazy(() => import("./components/AnalysisSidebar"));
-const AnalysisResults = lazy(() => import("./components/AnalysisResults"));
-const SheetMapper = lazy(() => import("./components/SheetMapper"));
-const DataEnrichment = lazy(() => import("./components/DataEnrichment"));
-const Imputation = lazy(() => import("./components/Imputation"));
-const DriftCheck = lazy(() => import("./components/DriftCheck"));
-const Crosstab = lazy(() => import("./components/Crosstab"));
-const TimeSeries = lazy(() => import("./components/TimeSeries"));
-const CompositeScore = lazy(() => import("./components/CompositeScore"));
-const Experiments = lazy(() => import("./components/Experiments"));
-const SubsetSelect = lazy(() => import("./components/SubsetSelect"));
-const FeatureCombinations = lazy(
-  () => import("./components/FeatureCombinations"),
-);
+const AnalysisSidebar = lazy(() => import("./pages/AnalysisSidebar"));
+const AnalysisResults = lazy(() => import("./pages/AnalysisResults"));
+const SheetMapper = lazy(() => import("./pages/SheetMapper"));
+const DataEnrichment = lazy(() => import("./pages/DataEnrichment"));
+const Imputation = lazy(() => import("./pages/Imputation"));
+const DriftCheck = lazy(() => import("./pages/DriftCheck"));
+const Crosstab = lazy(() => import("./pages/Crosstab"));
+const TimeSeries = lazy(() => import("./pages/TimeSeries"));
+const CompositeScore = lazy(() => import("./pages/CompositeScore"));
+const Experiments = lazy(() => import("./pages/Experiments"));
+const SubsetSelect = lazy(() => import("./pages/SubsetSelect"));
+const FeatureCombinations = lazy(() => import("./pages/FeatureCombinations"));
 import { handleImputation } from "./api";
 import { useSharedData } from "./hooks/useDatasetStore";
 import "./styles.css";
-
-const NAV = [
-  { path: "/", label: "📊 Главное" },
-  { path: "/imputation", label: "🔧 Пропуски" },
-  { path: "/crosstab", label: "📈 Кросс-таблицы" },
-  { path: "/timeseries", label: "📉 Временные ряды" },
-  { path: "/composite", label: "🎯 Композитные оценки" },
-  { path: "/combinations", label: "🔗 Комбинации" },
-  { path: "/drift", label: "🔄 Дрейф" },
-  { path: "/experiments", label: "📁 Эксперименты" },
-  { path: "/subset", label: "📋 Подмножество" },
-];
+import { NAV, EXCLUDE_COLS } from "./utils/constants";
+import { filterServiceCols } from "./utils/csvHelpers";
 
 function Tabs() {
   const location = useLocation();
@@ -153,6 +143,8 @@ function MainPage() {
     rows: [],
     rowCount: 0,
   });
+  const [analysisStage, setAnalysisStage] = useState("");
+  const [analysisProgress, setAnalysisProgress] = useState(0);
   const [corrResult, setCorrResult] = useState(null);
   const [trainTaskId, setTrainTaskId] = useState("");
   const [analysisResult, setAnalysisResult] = useState(null);
@@ -164,52 +156,223 @@ function MainPage() {
   const [sheetTypeInfo, setSheetTypeInfo] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [analysisTaskId, setAnalysisTaskId] = useState("");
+  const [analysisTaskId, setAnalysisTaskId] = useState(null);
 
-  // Функция запуска асинхронного анализа
-  async function onRunAnalysisAsync(params) {
-    const fullData = csvDataRef.current;
-    if (!fullData) return;
+  const [analysisStatus, setAnalysisStatus] = useState(null);
+  const [analysisLoading] = useState(false);
 
-    setBusy(true);
-    try {
-      const res = await runFullAnalysisAsync(fullData, {
-        ...params,
-        target_col: targetColumn,
-      });
-      setAnalysisTaskId(res.task_id);
-      // Запускаем polling
-      pollAnalysisStatus(res.task_id);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
+  const [corrTaskId, setCorrTaskId] = useState(null);
+  const [corrLoading, setCorrLoading] = useState(false);
+  // Эффект для polling
+  useEffect(() => {
+    console.log("🔵 POLLING EFFECT: analysisTaskId =", analysisTaskId);
 
-  // Polling статуса
-  const pollAnalysisStatus = (taskId) => {
-    console.log("Polling taskId:", taskId);
-    const interval = setInterval(async () => {
+    if (!analysisTaskId) return;
+
+    let isActive = true;
+    let intervalId = null;
+
+    const poll = async () => {
+      if (!isActive) return;
+
       try {
-        const status = await getFullAnalysisStatus(taskId);
-        //setAnalysisStatus(status);
+        const data = await getFullAnalysisStatus(analysisTaskId);
 
-        if (status.status === "SUCCESS") {
-          clearInterval(interval);
-          setAnalysisResult(status.result);
-          // обновляем sharedData
-          if (status.result?.data_with_clusters) {
-            shared.updateData(status.result.data_with_clusters);
+        if (!isActive) return;
+
+        setAnalysisStatus(data.status);
+
+        if (data.status === "SUCCESS") {
+          console.log("=== ПОЛНЫЙ ОТВЕТ ОТ БЭКЕНДА ===", data.result);
+          console.log("=== target_col в ответе ===", data.result?.target_col);
+          console.log("🔵 ВРЕМЯ ПОЛУЧЕНИЯ:", new Date().toLocaleTimeString());
+          console.log(
+            "🔵 РАЗМЕР data.result:",
+            JSON.stringify(data.result).length / 1024 / 1024,
+            "MB",
+          );
+          setAnalysisResult(data.result);
+          if (data.result?.data_with_clusters) {
+            shared.updateData(data.result.data_with_clusters);
           }
-        } else if (status.status === "FAILURE") {
-          clearInterval(interval);
-          setError(status.error || "Analysis failed");
+          setAnalysisTaskId(null);
+          setBusy(false);
+          if (intervalId) clearInterval(intervalId);
+          sessionStorage.removeItem("active_analysis_task_id");
+          sessionStorage.removeItem("active_analysis_params");
+          sessionStorage.removeItem("active_analysis_target");
+        } else if (data.status === "FAILURE") {
+          setError(data.error || "Analysis failed");
+          setAnalysisTaskId(null);
+          setBusy(false);
+          if (intervalId) clearInterval(intervalId);
+          sessionStorage.removeItem("active_analysis_task_id");
+          sessionStorage.removeItem("active_analysis_params");
+          sessionStorage.removeItem("active_analysis_target");
+        } else if (data.status === "PROGRESS") {
+          setAnalysisStage(data.stage || "Выполняется...");
+          setAnalysisProgress(data.progress || 0);
+          setAnalysisStatus("PROGRESS");
         }
       } catch (err) {
         console.error("Polling error:", err);
       }
-    }, 2000);
+    };
+
+    // Первый запрос сразу
+    poll();
+
+    // Затем каждые 3 секунды
+    intervalId = setInterval(poll, 3000);
+
+    return () => {
+      isActive = false;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [analysisTaskId]);
+
+  // Функция запуска асинхронного анализа
+  async function onRunAnalysisAsync(params) {
+    console.log("🔵 [App] Получены параметры в onRunAnalysisAsync:", params);
+    const fullData = csvDataRef.current;
+    if (!fullData) return;
+    if (!targetColumn) {
+      setError("Пожалуйста, выберите целевую переменную на главной вкладке");
+      return;
+    }
+    sessionStorage.removeItem("active_analysis_task_id");
+    sessionStorage.removeItem("active_analysis_params");
+    sessionStorage.removeItem("active_analysis_target");
+
+    setBusy(true);
+    setAnalysisResult(null);
+    setAnalysisTaskId(null);
+    setError("");
+
+    try {
+      const requestParams = {
+        ...params,
+        target_col: targetColumn,
+      };
+      console.log("🔵 [App] Отправляем в API:", requestParams);
+      console.log("🔵 targetColumn =", targetColumn);
+      console.log("🔵 targetSelected =", targetSelected);
+
+      const res = await runFullAnalysisAsync(fullData, requestParams);
+      const taskId = res.task_id;
+      setAnalysisTaskId(taskId);
+
+      // 🔥 СОХРАНЯЕМ taskId в sessionStorage
+      sessionStorage.setItem("active_analysis_task_id", taskId);
+      sessionStorage.setItem("active_analysis_target", targetColumn);
+      sessionStorage.setItem(
+        "active_analysis_params",
+        JSON.stringify({
+          target_col: targetColumn,
+          ...params,
+        }),
+      );
+    } catch (e) {
+      console.error("Failed to start analysis:", e);
+      setError(e.message);
+      setBusy(false);
+    }
+  }
+  // Отображение статуса
+  const renderAnalysisStatus = () => {
+    if (!analysisTaskId) return null;
+
+    const handleCancel = async () => {
+      if (window.confirm("Отменить выполнение анализа?")) {
+        try {
+          await cancelFullAnalysis(analysisTaskId);
+          setAnalysisTaskId(null);
+          setBusy(false);
+          setError("Анализ отменён пользователем");
+          sessionStorage.removeItem("active_analysis_task_id");
+          sessionStorage.removeItem("active_analysis_params");
+          sessionStorage.removeItem("active_analysis_target");
+        } catch (err) {
+          console.error("Cancel failed:", err);
+          setError("Не удалось отменить задачу");
+        }
+      }
+    };
+
+    return (
+      <div className="card" style={{ marginTop: 12 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <h3 style={{ margin: 0 }}>📊 Статус анализа</h3>
+          <button
+            onClick={handleCancel}
+            style={{
+              padding: "4px 12px",
+              background: "#e74c3c",
+              color: "white",
+              border: "none",
+              borderRadius: "4px",
+              cursor: "pointer",
+            }}
+          >
+            ❌ Отменить
+          </button>
+        </div>
+
+        {/* Прогресс-бар */}
+        <div className="progress-container" style={{ marginBottom: 12 }}>
+          <div
+            className="progress-bar-fill"
+            style={{
+              width: `${analysisProgress}%`,
+              backgroundColor:
+                analysisStatus === "FAILURE" ? "#e74c3c" : "var(--primary)",
+              height: "8px",
+              borderRadius: "4px",
+              transition: "width 0.3s ease",
+            }}
+          />
+        </div>
+
+        {/* Статус и этап */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: "bold" }}>
+              {analysisStage || "Выполняется..."}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              Прогресс: {analysisProgress}%
+            </div>
+          </div>
+          {analysisProgress > 0 &&
+            analysisProgress < 100 &&
+            analysisStatus !== "FAILURE" && (
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                ⏳ Пожалуйста, подождите...
+              </div>
+            )}
+        </div>
+
+        {/* Ошибка если есть */}
+        {analysisStatus === "FAILURE" && (
+          <div style={{ marginTop: 8, color: "#e74c3c", fontSize: 13 }}>
+            ❌ {analysisStage || "Ошибка выполнения"}
+          </div>
+        )}
+      </div>
+    );
   };
 
   useEffect(() => {
@@ -248,50 +411,11 @@ function MainPage() {
   const [selectedSheet, setSelectedSheet] = useState(""); // Выбранный лист
   const [rawExcelData, setRawExcelData] = useState(null); // Сырые данные после processExcel (до обогащения)
 
-  // Выбор целевой переменной (как в Streamlit)
+  // Выбор целевой переменной
   const [targetColumn, setTargetColumn] = useState("");
   const [targetSelected, setTargetSelected] = useState(false);
 
   // Служебные колонки — исключаем из выбора target И из превью
-  const EXCLUDE_COLS = useMemo(
-    () =>
-      new Set([
-        "user",
-        "user_id",
-        "vk_id",
-        "vk id",
-        "vk",
-        "фамилия",
-        "имя",
-        "отчество",
-        "вуз",
-        "факультет",
-        "группа",
-        "курс",
-        "пол",
-        "возраст",
-        "дата",
-        "date",
-        "направление подготовки",
-        "_source_sheet",
-        "_sheet_type",
-      ]),
-    [],
-  );
-
-  // Фильтрация служебных колонок из клиентских данных
-  function filterServiceCols(data) {
-    if (!data || !data.length) return data;
-    return data.map((row) => {
-      const filtered = {};
-      for (const [key, val] of Object.entries(row)) {
-        if (!EXCLUDE_COLS.has(key.toLowerCase())) {
-          filtered[key] = val;
-        }
-      }
-      return filtered;
-    });
-  }
 
   // Доступные колонки для выбора target
   const targetCandidates = useMemo(() => {
@@ -304,6 +428,7 @@ function MainPage() {
     console.log("[targetCandidates] filtered:", filtered);
     return filtered;
   }, [EXCLUDE_COLS, refreshFlag]);
+
   // Отладка — временно, потом удалить
   useEffect(() => {
     console.log("=== ОТЛАДКА ПОСЛЕ ОБНОВЛЕНИЯ ===");
@@ -321,6 +446,70 @@ function MainPage() {
         !rawExcelData,
     );
   }, [csvData, targetSelected, targetCandidates, sheetPreview, rawExcelData]);
+
+  useEffect(() => {
+    if (analysisTaskId) {
+      sessionStorage.setItem("active_analysis_task_id", analysisTaskId);
+      // Сохраняем параметры для возможного восстановления
+      sessionStorage.setItem("active_analysis_target", targetColumn);
+    }
+  }, [analysisTaskId, targetColumn]);
+
+  // Восстанавливаем задачу при монтировании компонента
+  useEffect(() => {
+    const savedTaskId = sessionStorage.getItem("active_analysis_task_id");
+    const savedTarget = sessionStorage.getItem("active_analysis_target");
+    console.log("🔵 RESTORE EFFECT: savedTaskId =", savedTaskId);
+    if (savedTaskId && !analysisTaskId && !analysisResult) {
+      console.log("🔄 Восстановление задачи:", savedTaskId);
+      setAnalysisTaskId(savedTaskId);
+      setBusy(true);
+      if (savedTarget) {
+        setTargetColumn(savedTarget);
+        setTargetSelected(true);
+      }
+    }
+  }, [analysisResult, analysisTaskId]);
+
+  // Эффект для опроса статуса корреляции
+  useEffect(() => {
+    if (!corrTaskId) return;
+
+    let isActive = true;
+    let intervalId = null;
+
+    const poll = async () => {
+      if (!isActive) return;
+      try {
+        const data = await getCorrelationStatus(corrTaskId);
+        console.log("🔵 Correlation status:", data);
+
+        if (data.status === "SUCCESS") {
+          console.log("🔵 Correlation result:", data.result);
+          setCorrResult(data.result);
+          setCorrTaskId(null);
+          setCorrLoading(false);
+          if (intervalId) clearInterval(intervalId);
+        } else if (data.status === "FAILURE") {
+          setError(data.error || "Correlation failed");
+          setCorrTaskId(null);
+          setCorrLoading(false);
+          if (intervalId) clearInterval(intervalId);
+        }
+      } catch (err) {
+        console.error("Polling error:", err);
+      }
+    };
+
+    poll();
+    intervalId = setInterval(poll, 2000);
+
+    return () => {
+      isActive = false;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [corrTaskId]);
+
   // Статистика по выбранной колонке
   const targetStats = useMemo(() => {
     if (!targetColumn) return null;
@@ -354,24 +543,29 @@ function MainPage() {
 
   async function onCorrelation() {
     if (!file) return;
+
+    setCorrLoading(true);
+    setCorrResult(null);
+    setError("");
+
     try {
-      setBusy(true);
-      setError("");
-      const res = await uploadForCorrelation(file);
-      setCorrResult(res);
+      const res = await runCorrelationAsync(csvDataRef.current, targetColumn);
+      setCorrTaskId(res.task_id);
     } catch (e) {
       setError(String(e.message || e));
-    } finally {
-      setBusy(false);
+      setCorrLoading(false);
     }
   }
-
   async function onTrainAsync() {
     if (!csvData || !csvData.length) return;
+    if (!targetColumn) {
+      setError("Пожалуйста, выберите целевую переменную на главной вкладке");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      const res = await trainAsyncJson(csvData);
+      const res = await trainAsyncJson(csvData, targetColumn);
       setTrainTaskId(res.task_id);
     } catch (e) {
       setError(String(e.message || e));
@@ -384,13 +578,50 @@ function MainPage() {
     if (!saveName.trim() || !analysisResult) return;
     setSaving(true);
     try {
+      const fullMetrics = {
+        test: analysisResult.test_metrics || {},
+        cv_results: analysisResult.cv_results || {},
+        ...analysisResult.metrics,
+      };
+
+      const fullConfig = {
+        ...(analysisResult.config || {}),
+        target_col: analysisResult.target_col,
+        model_name:
+          analysisResult.config?.model_name || analysisResult.model_name,
+        test_metrics: analysisResult.test_metrics,
+        n_samples: analysisResult.config?.n_samples || analysisResult.n_samples,
+        n_features: analysisResult.selected_features?.length || 0,
+        n_clusters:
+          analysisResult.config?.n_clusters || analysisResult.n_clusters,
+        use_smote: analysisResult.config?.use_smote,
+        corr_threshold: analysisResult.config?.corr_threshold,
+        optimization_metric: analysisResult.config?.optimization_metric,
+        shap_top_n: analysisResult.config?.shap_top_n,
+        risk_threshold: analysisResult.config?.risk_threshold,
+        use_lr: analysisResult.config?.use_lr,
+        use_rf: analysisResult.config?.use_rf,
+        use_xgb: analysisResult.config?.use_xgb,
+        use_hp_tuning: analysisResult.config?.use_hp_tuning || false,
+        n_iter_tuning: analysisResult.config?.n_iter_tuning || 20,
+        timestamp: new Date().toISOString(),
+      };
+      console.log("🔍 Сохраняемый конфиг:", fullConfig);
       await saveExperiment(
         saveName,
-        analysisResult.test_metrics || analysisResult.metrics || {},
+        fullMetrics,
         analysisResult.selected_features || [],
         saveDesc,
-        analysisResult.config || {},
+        fullConfig,
       );
+      console.log("🔍 analysisResult.config:", analysisResult.config);
+      console.log("🔍 analysisResult full:", analysisResult);
+      console.log("🔍 analysisResult.model_name:", analysisResult.model_name);
+      console.log(
+        "🔍 analysisResult.config.model_name:",
+        analysisResult.config?.model_name,
+      );
+
       setSaveModalOpen(false);
       setSaveName("");
       setSaveDesc("");
@@ -412,7 +643,7 @@ function MainPage() {
       Object.keys(data[0] || {}),
     );
 
-    let filtered = filterServiceCols(data);
+    let filtered = filterServiceCols(data, EXCLUDE_COLS);
 
     console.log(
       "[setDataAndPreview] After filter, columns:",
@@ -635,8 +866,48 @@ function MainPage() {
   }
 
   function renderCorrelationTable() {
-    if (!corrResult?.correlation_matrix) return null;
-    const matrix = corrResult.correlation_matrix;
+    const matrix = corrResult?.correlation_matrix;
+
+    if (!matrix) {
+      // Если есть correlations с целевой переменной
+      if (corrResult?.correlations) {
+        return (
+          <div className="table-wrap">
+            <table className="matrix">
+              <thead>
+                <tr>
+                  <th>Признак</th>
+                  <th>Корреляция с {corrResult.target_col}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(corrResult.correlations).map(
+                  ([feature, corr]) => (
+                    <tr key={feature}>
+                      <td>
+                        <b>{feature}</b>
+                      </td>
+                      <td
+                        className={
+                          corr > 0
+                            ? "heat-high"
+                            : corr < 0
+                              ? "heat-neg-mid"
+                              : ""
+                        }
+                      >
+                        {corr.toFixed(4)}
+                      </td>
+                    </tr>
+                  ),
+                )}
+              </tbody>
+            </table>
+          </div>
+        );
+      }
+      return <p className="muted">Нет данных для отображения</p>;
+    }
     const cols = Object.keys(matrix);
     const getCellClass = (v) => {
       if (v > 0.7) return "heat-high";
@@ -760,6 +1031,7 @@ function MainPage() {
               detectedGroup={sheetTypeInfo?.detected_group}
               onConfirm={onEnrichmentConfirm}
               onSkip={onEnrichmentSkip}
+              isLoading={busy}
             />
           )}
           {/* --------------------------- */}
@@ -880,9 +1152,8 @@ function MainPage() {
               </div>
             </div>
           )}
-
         {error && <p className="error">{error}</p>}
-
+        {renderAnalysisStatus()}
         {/* Результаты ПОСЛЕ нажатия кнопки */}
         {analysisResult && (
           <>
@@ -983,18 +1254,21 @@ function MainPage() {
         {!analysisResult && (
           <>
             <div className="card">
-              <h2>2) Корреляционный анализ (быстрый)</h2>
-              <button onClick={onCorrelation} disabled={!file || busy}>
-                Запустить корреляцию
+              <h2>2) Корреляционный анализ</h2>
+              <p className="muted">
+                Асинхронный анализ корреляций (работает на любом объёме данных)
+              </p>
+              <button onClick={onCorrelation} disabled={!file || corrLoading}>
+                {corrLoading ? "⏳ Загрузка..." : "Запустить корреляцию"}
               </button>
-              {corrResult ? (
-                <>
+
+              {corrResult && (
+                <div style={{ marginTop: 12 }}>
                   <p>
                     Размер: <b>{corrResult.n_rows}</b> строк ×{" "}
                     <b>{corrResult.n_columns}</b> колонок
                   </p>
                   {renderCorrelationTable()}
-                  {/* Plotly Heatmap */}
                   {corrResult.heatmap && (
                     <div className="plots-grid" style={{ marginTop: 12 }}>
                       <Plot
@@ -1005,10 +1279,12 @@ function MainPage() {
                       />
                     </div>
                   )}
-                </>
-              ) : (
-                <p className="muted">
-                  После запуска появится корреляционная матрица.
+                </div>
+              )}
+
+              {corrTaskId && !corrResult && (
+                <p className="muted" style={{ marginTop: 8 }}>
+                  ⏳ Вычисление корреляции в фоне...
                 </p>
               )}
             </div>
@@ -1022,16 +1298,35 @@ function MainPage() {
                 Обучение модели (Async)
               </button>
               {analysisTaskId && (
-                <PollingTask
-                  taskId={analysisTaskId}
-                  title="Полный анализ модели"
-                  getStatusFunc={getFullAnalysisStatus}
-                  onStatus={(status) => {
-                    if (status.status === "SUCCESS" && status.result) {
-                      setAnalysisResult(status.result);
-                    }
-                  }}
-                />
+                <div className="card" style={{ marginTop: 12 }}>
+                  <h3>📊 Статус анализа</h3>
+                  <div className="progress-bar">
+                    <div
+                      className="progress-fill"
+                      style={{
+                        width: analysisLoading
+                          ? "50%"
+                          : analysisStatus === "SUCCESS"
+                            ? "100%"
+                            : "0%",
+                      }}
+                    />
+                  </div>
+                  <p>
+                    Статус: <b>{analysisStatus}</b>
+                    {analysisStatus === "PROGRESS" && analysisResult?.stage && (
+                      <> — {analysisResult.stage}</>
+                    )}
+                  </p>
+                  {analysisStatus === "SUCCESS" && !analysisResult && (
+                    <p className="ok">
+                      ✅ Завершено! Загружаются результаты...
+                    </p>
+                  )}
+                  {/*                                     {analysisTaskError && ( */}
+                  {/*                                       <p className="error">{analysisTaskError}</p> */}
+                  {/*                                     )} */}
+                </div>
               )}
             </div>
 
@@ -1056,7 +1351,10 @@ export default function App() {
     <HashRouter>
       <ThemeToggle />
       <main className="container">
-        <h1>АРМ исследователя — Мониторинг академических рисков</h1>
+        <h1>
+          Автоматизирования система научных исследований — модуль АРМ
+          исследователя
+        </h1>
         <p className="muted">React MFE · FastAPI API · ml_core</p>
         <p>
           API:{" "}
@@ -1070,15 +1368,79 @@ export default function App() {
         </p>
         <Tabs />
         <Routes>
-          <Route path="/" element={<MainPage />} />
-          <Route path="/imputation" element={<Imputation />} />
-          <Route path="/crosstab" element={<Crosstab />} />
-          <Route path="/timeseries" element={<TimeSeries />} />
-          <Route path="/composite" element={<CompositeScore />} />
-          <Route path="/drift" element={<DriftCheck />} />
-          <Route path="/experiments" element={<Experiments />} />
-          <Route path="/combinations" element={<FeatureCombinations />} />
-          <Route path="/subset" element={<SubsetSelect />} />
+          <Route
+            path="/"
+            element={
+              <SafeErrorBoundary fallbackPath="/">
+                <MainPage />
+              </SafeErrorBoundary>
+            }
+          />
+          <Route
+            path="/imputation"
+            element={
+              <SafeErrorBoundary fallbackPath="/">
+                <Imputation />
+              </SafeErrorBoundary>
+            }
+          />
+          <Route
+            path="/crosstab"
+            element={
+              <SafeErrorBoundary fallbackPath="/">
+                <Crosstab />
+              </SafeErrorBoundary>
+            }
+          />
+          <Route
+            path="/timeseries"
+            element={
+              <SafeErrorBoundary fallbackPath="/">
+                <TimeSeries />
+              </SafeErrorBoundary>
+            }
+          />
+          <Route
+            path="/composite"
+            element={
+              <SafeErrorBoundary fallbackPath="/">
+                <CompositeScore />
+              </SafeErrorBoundary>
+            }
+          />
+
+          <Route
+            path="/drift"
+            element={
+              <SafeErrorBoundary fallbackPath="/">
+                <DriftCheck />
+              </SafeErrorBoundary>
+            }
+          />
+          <Route
+            path="/experiments"
+            element={
+              <SafeErrorBoundary fallbackPath="/">
+                <Experiments />
+              </SafeErrorBoundary>
+            }
+          />
+          <Route
+            path="/combinations"
+            element={
+              <SafeErrorBoundary fallbackPath="/">
+                <FeatureCombinations />
+              </SafeErrorBoundary>
+            }
+          />
+          <Route
+            path="/subset"
+            element={
+              <SafeErrorBoundary fallbackPath="/">
+                <SubsetSelect />
+              </SafeErrorBoundary>
+            }
+          />
         </Routes>
       </main>
     </HashRouter>

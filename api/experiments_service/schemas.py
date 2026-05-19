@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 
 class ExperimentSaveRequest(BaseModel):
@@ -8,3 +8,5 @@ class ExperimentSaveRequest(BaseModel):
     features: List[str] = []
     description: str = ""
     config: Dict[str, Any] = {}
+    target_col: Optional[str] = None
+    model_name: Optional[str] = None

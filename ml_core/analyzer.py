@@ -11,6 +11,9 @@ from api.ml_service.schemas import AnalysisResponse
 from .text_processor import extract_text_features
 from sklearn.model_selection import train_test_split
 import numpy as np
+import cProfile
+import pstats
+from io import StringIO
 
 
 class ResearchAnalyzer:
@@ -106,6 +109,13 @@ class ResearchAnalyzer:
             if target_col in all_features:
                 print(f"[WARNING] Target column {target_col} is in features! Removing...")
                 all_features.remove(target_col)
+
+            if not all_features:
+                raise ValueError(
+                    "Нет признаков для анализа. "
+                    "В датасете не осталось числовых колонок после исключения целевой переменной. "
+                    "Убедитесь, что файл содержит хотя бы один числовой признак."
+                )
             if n_features_to_select and n_features_to_select < len(all_features):
                 report(f"Отбор {n_features_to_select} лучших признаков", 18)
 
@@ -213,10 +223,33 @@ class ResearchAnalyzer:
 
             report("Обучение моделей", 60)
             model, model_name, results = self.trainer.train_models_parallel(
-                X_train, y_train, X_test, y_test, scoring=optimization_metric
+                X_train, y_train, X_test, y_test, scoring=optimization_metric, cv_folds=5
             )
-            metrics = {"test": results[model_name]["metrics"], "cv_results": {}}
+            cv_results = {}
+            for name, res in results.items():
+                # Достаём metrics из res
+                metrics_dict = res.get("metrics", {})
 
+                # Проверяем наличие cv_scores в metrics_dict
+                if "cv_scores" in metrics_dict:
+                    cv_results[name] = {
+                        "mean": metrics_dict.get("cv_mean", 0),
+                        "std": metrics_dict.get("cv_std", 0),
+                        "scores": metrics_dict.get("cv_scores", []),
+                    }
+                else:
+                    print(f"⚠️ Нет cv_scores для {name}: {metrics_dict.keys()}")
+
+            print(f"🔍 DEBUG cv_results after build: {cv_results}")
+
+            test_metrics = {
+                "f1": results[model_name]["metrics"].get("f1", 0),
+                "precision": results[model_name]["metrics"].get("precision", 0),
+                "recall": results[model_name]["metrics"].get("recall", 0),
+                "roc_auc": results[model_name]["metrics"].get("roc_auc", 0),
+            }
+
+            metrics = {"test": test_metrics, "cv_results": cv_results}
             # Возвращаем оригинальный набор моделей обратно
             self.trainer.models = original_models_backup
 
@@ -245,6 +278,7 @@ class ResearchAnalyzer:
                 threshold=risk_threshold,
                 target_name=target_col,
                 top_n=shap_top_n,
+                n_students=5,
             )
 
             self.last_df = df
@@ -323,6 +357,8 @@ class ResearchAnalyzer:
 
             self.last_df = df_with_clusters
             report("Завершение", 100)
+            print("🔍 DEBUG cv_results:", metrics.get("cv_results", {}))
+            print("🔍 DEBUG cv_results keys:", metrics.get("cv_results", {}).keys())
             # Добавляем в результат
             return AnalysisResponse(
                 metrics=metrics,
@@ -426,3 +462,19 @@ class ResearchAnalyzer:
             subset = df
 
         return subset.reset_index(drop=True)
+
+    def profile_analysis(self, df: pd.DataFrame, target_col: str, **kwargs):
+        profiler = cProfile.Profile()
+        profiler.enable()
+
+        result = self.run_full_analysis(df, target_col, **kwargs)
+
+        profiler.disable()
+        s = StringIO()
+        ps = pstats.Stats(profiler, stream=s).sort_stats("cumulative")
+        ps.print_stats(30)
+
+        with open("profile_report.txt", "w") as f:
+            f.write(s.getvalue())
+
+        return result

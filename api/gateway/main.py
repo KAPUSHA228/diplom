@@ -12,7 +12,7 @@ from api.experiments_service.main import router as experiments_router
 
 app = FastAPI(
     title="ML Analytics Gateway",
-    description="API Gateway для ML-модуля системы мониторинга академических рисков",
+    description="API Gateway для ML-модуля Автоматической системы научных исследований (АСНИ)",
     version="1.0.0",
 )
 

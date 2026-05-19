@@ -14,7 +14,7 @@ class AnalysisRequest(BaseModel):
     n_features_to_select: int = Field(7, ge=3, le=15)
     is_synthetic: bool = Field(False, description="Являются ли данные синтетическими")
     use_hp_tuning: bool = False
-    n_iter_tuning: int = (20,)
+    n_iter_tuning: int = (Field(20, ge=5, le=100),)
     optimization_metric: Optional[str] = None
     shap_top_n: int = Field(5, ge=1, le=20)
     use_lr: bool = True

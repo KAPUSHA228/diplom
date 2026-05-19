@@ -13,10 +13,19 @@ export default function DataEnrichment({
   detectedGroup,
   onConfirm,
   onSkip,
+  isLoading = false,
 }) {
   const [strategy, setStrategy] = useState("auto");
   const [threshold, setThreshold] = useState(30.0);
+  const handleConfirm = () => {
+    if (isLoading) return;
+    onConfirm({ strategy, threshold });
+  };
 
+  const handleSkip = () => {
+    if (isLoading) return;
+    onSkip();
+  };
   return (
     <div className="card data-enrichment">
       <h2>🧪 Обогащение данных</h2>
@@ -38,7 +47,8 @@ export default function DataEnrichment({
                   name="imputation-strategy"
                   value={s.value}
                   checked={strategy === s.value}
-                  onChange={() => setStrategy(s.value)}
+                  onChange={() => !isLoading && setStrategy(s.value)}
+                  disabled={isLoading}
                 />
                 {s.label}
               </label>
@@ -54,7 +64,8 @@ export default function DataEnrichment({
             max="50"
             step="1"
             value={threshold}
-            onChange={(e) => setThreshold(Number(e.target.value))}
+            onChange={(e) => !isLoading && setThreshold(Number(e.target.value))}
+            disabled={isLoading}
           />
         </label>
       </div>
@@ -62,11 +73,14 @@ export default function DataEnrichment({
       <div className="row" style={{ marginTop: 16 }}>
         <button
           className="primary"
-          onClick={() => onConfirm({ strategy, threshold })}
+          onClick={handleConfirm}
+          disabled={isLoading}
         >
-          ✅ Применить обогащение
+          {isLoading ? "⏳ Обработка..." : "✅ Применить обогащение"}
         </button>
-        <button onClick={onSkip}>⏭️ Пропустить</button>
+        <button onClick={handleSkip} disabled={isLoading}>
+          {isLoading ? "⏳..." : "⏭️ Пропустить"}
+        </button>
       </div>
 
       <style>{`
