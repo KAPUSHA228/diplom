@@ -22,6 +22,7 @@ def handle_missing_values(df, strategy="auto", threshold=30):
 
     # Нормализация: пустые строки и строки с пробелами → NaN
     for col in df.columns:
+
         if df[col].dtype == "object":
             df[col] = df[col].replace(r"^\s*$", np.nan, regex=True)
 
@@ -29,6 +30,8 @@ def handle_missing_values(df, strategy="auto", threshold=30):
     report = {"original_shape": df.shape, "missing_before": df.isna().sum().sum(), "actions": []}
 
     for col in df.columns:
+        if col == "student_id":
+            continue
         null_pct = df[col].isna().mean() * 100
 
         if null_pct == 0:

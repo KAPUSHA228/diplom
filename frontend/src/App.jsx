@@ -13,8 +13,8 @@ import {
   cancelFullAnalysis,
   runCorrelationAsync,
   getCorrelationStatus,
+  processCSV,
 } from "./api";
-// Все компоненты, которые не видны сразу, загружаем лениво
 const AnalysisSidebar = lazy(() => import("./pages/AnalysisSidebar"));
 const AnalysisResults = lazy(() => import("./pages/AnalysisResults"));
 const SheetMapper = lazy(() => import("./pages/SheetMapper"));
@@ -708,6 +708,8 @@ function MainPage() {
     setError("");
     try {
       const res = await handleImputation(rawExcelData, strategy, threshold);
+      console.log("🔍 ПОЛУЧЕНО С БЭКЕНДА:", res);
+      console.log("🔍 КОЛОНКИ В ОТВЕТЕ:", Object.keys(res.data[0] || {}));
       setDataAndPreview(res.data);
       setRawExcelData(null);
       setSheetPreview(null);
@@ -823,41 +825,36 @@ function MainPage() {
         // Один лист — читаем сразу
         const sheet = wb.Sheets[sheetNames[0]];
         allRows = XLSX.utils.sheet_to_json(sheet, { defval: null });
+        setRawExcelData(allRows);
+        setCsvPreview({
+          headers: Object.keys(allRows[0] || {}),
+          rows: allRows
+            .slice(0, 5)
+            .map((r) => Object.values(r).map((v) => String(v))),
+          rowCount: allRows.length,
+          riskPct: null,
+        });
+        setSheetTypeInfo({
+          group_label: "📊 Данные",
+          detected_group: "numeric",
+        });
       } else {
         // ========== CSV: читаем напрямую ==========
-        const text = await next.text();
-        const lines = text.split(/\r?\n/).filter(Boolean);
-        if (lines.length === 0) return;
-
-        const headers = lines[0].split(",").map((h) => h.trim());
-        allRows = lines.slice(1).map((l) => {
-          const cells = l.split(",").map((c) => c.trim());
-          const obj = {};
-          headers.forEach((h, i) => {
-            const v = cells[i] ?? "";
-            obj[h] = v === "" ? "" : isNaN(v) ? v : Number(v);
-          });
-          return obj;
+        const res = await processCSV(next);
+        setRawExcelData(res.data);
+        setCsvPreview({
+          headers: Object.keys(res.data[0] || {}),
+          rows: res.data
+            .slice(0, 5)
+            .map((r) => Object.values(r).map((v) => String(v))),
+          rowCount: res.rows,
+          riskPct: null,
+        });
+        setSheetTypeInfo({
+          group_label: "📊 Данные (обработано)",
+          detected_group: "numeric",
         });
       }
-
-      // ========== ОБЩАЯ ОБРАБОТКА ДЛЯ CSV (и для Excel после загрузки листа) ==========
-      // Отправляем в DataEnrichment через rawExcelData
-      setRawExcelData(allRows);
-
-      setCsvPreview({
-        headers: Object.keys(allRows[0] || {}),
-        rows: allRows
-          .slice(0, 5)
-          .map((r) => Object.values(r).map((v) => String(v))),
-        rowCount: allRows.length,
-        riskPct: null,
-      });
-
-      setSheetTypeInfo({
-        group_label: "📊 Данные",
-        detected_group: "numeric",
-      });
     } catch (err) {
       console.error(err);
       setError("Ошибка чтения файла: " + err.message);

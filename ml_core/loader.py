@@ -387,6 +387,7 @@ def preprocess_sheet(
     Returns:
         (df_processed, message): обработанный DataFrame и сообщение
     """
+    print(f"🔍 PREPROCESS SHEET: sheet_group={sheet_group}, len(df)={len(df)}")
     # Если данных мало — обрабатываем сразу
     if len(df) <= chunk_size:
         return preprocess_sheet_impl(df, sheet_group, sheet_name, mapping_config)
@@ -485,9 +486,16 @@ def preprocess_sheet_impl(
 
                 elif col_type == "ordinal":
                     val_map = col_config.get("map") or col_config.get("mapping") or {}
-                    if val_map:
-                        mapped = df[matching_col].map(val_map)
-                        df[matching_col] = pd.to_numeric(mapped, errors="coerce")
+                    val_map = {k: int(v) for k, v in val_map.items() if v is not None and v != ""}
+                    unique_vals = df[matching_col].dropna().unique()
+                    existing_mapped = set(val_map.keys())
+                    missing_vals = [v for v in unique_vals if v not in existing_mapped]
+                    next_idx = max(val_map.values()) + 1 if val_map else 1
+                    for missing in missing_vals:
+                        val_map[missing] = next_idx
+                        next_idx += 1
+                    mapped = df[matching_col].map(val_map)
+                    df[matching_col] = pd.to_numeric(mapped, errors="coerce")
 
                 elif col_type in ("one_hot", "categorical") or col_config.get("encoding") == "onehot":
                     dummies = pd.get_dummies(df[matching_col], prefix=matching_col, prefix_sep="_")
@@ -546,8 +554,14 @@ def preprocess_sheet_impl(
         df = df.drop(columns=service_cols)
 
     # === 4. Гарантируем наличие идентификатора студента ===
+    print(f"🔍 ДО добавления student_id: колонки = {list(df.columns)}")
     if "student_id" not in df.columns:
         df["student_id"] = [f"student_{i:06d}" for i in range(len(df))]
+        print(f"✅ Добавлен student_id, длина = {len(df)}")
+    else:
+        print("⚠️ student_id уже существует")
+
+    print(f"🔍 ПОСЛЕ добавления: колонки = {list(df.columns)}")
 
     # Перемещаем student_id в начало для удобства
     if "student_id" in df.columns:
@@ -557,6 +571,8 @@ def preprocess_sheet_impl(
     df = df.loc[:, ~df.columns.duplicated()]
 
     message = " | ".join(message_parts)
+    print(f"🔍 ПОСЛЕ удаления служебных: колонки = {list(df.columns)}")
+    print(f"🔍 ФИНАЛЬНЫЕ значения student_id (первые 5): {df['student_id'].head().tolist()}")
     return df, message
 
 

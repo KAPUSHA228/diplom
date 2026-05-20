@@ -240,6 +240,22 @@ export async function cancelFullAnalysis(taskId) {
   return request(`/api/v1/ml/full_async/${taskId}/cancel`, { method: "POST" });
 }
 
+export async function processCSV(
+  file,
+  sheetGroup = "numeric",
+  mappingConfig = null,
+) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("sheet_group", sheetGroup);
+  if (mappingConfig) {
+    form.append("mapping_config", JSON.stringify(mappingConfig));
+  }
+  return request("/api/v1/analyze/csv/process", {
+    method: "POST",
+    body: form,
+  });
+}
 export async function runCorrelationAsync(data, targetCol = null) {
   return request("/api/v1/ml/correlation_async", {
     method: "POST",

@@ -137,6 +137,57 @@ async def excel_process(
             pass
 
 
+@router.post("/csv/process")
+async def csv_process(
+    file: UploadFile = File(...),
+    sheet_group: str = Form("numeric"),
+    mapping_config: Optional[str] = Form(None),
+):
+    """Обработка CSV файла через тот же пайплайн, что и Excel"""
+    import tempfile
+    import os
+    import json
+
+    print(f"🔍 CSV PROCESS: sheet_group={sheet_group}")
+    print(f"🔍 CSV PROCESS: mapping_config={mapping_config}")
+    config = None
+    if mapping_config:
+        try:
+            config = json.loads(mapping_config)
+        except Exception:
+            pass
+
+    # Сохраняем временный файл
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        from ml_core.loader import preprocess_sheet
+
+        # Читаем CSV
+        df = pd.read_csv(tmp_path)
+
+        # Используем ту же функцию, что и для Excel
+        df_processed, msg = preprocess_sheet(
+            df, sheet_group=sheet_group, sheet_name="csv_upload", mapping_config=config
+        )
+
+        # Заменяем NaN и inf перед сериализацией
+        df_clean = df_processed.replace([np.inf, -np.inf], np.nan)
+        df_clean = df_clean.where(df_clean.notna(), None)
+
+        return {"message": msg, "data": safe_json_serializable(df_clean.to_dict("records")), "rows": len(df_processed)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка обработки CSV: {str(e)}")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+
 @router.post("/imputation/handle")
 async def handle_imputation(request: ImputationRequest):
     """Обработка пропусков и выбросов в данных."""
@@ -144,12 +195,17 @@ async def handle_imputation(request: ImputationRequest):
         from ml_core.imputation import handle_missing_values, detect_outliers
 
         df = pd.DataFrame(request.df)
-        from ml_core.loader import preprocess_sheet
 
-        df, _ = preprocess_sheet(df, sheet_group="numeric")
+        print(
+            f"🔍 handle_imputation: первые 5 student_id = {df['student_id'].head().tolist() if 'student_id' in df.columns else 'NO COLUMN'}"
+        )
+        print(f"🔍 ДО imputation: колонки = {df.columns.tolist()}")
+        print(f"🔍 ДО imputation: есть ли student_id? {'student_id' in df.columns}")
+        # df, _ = preprocess_sheet(df, sheet_group="numeric")
         df_clean, report = handle_missing_values(df, strategy=request.strategy, threshold=request.threshold)
         outliers = detect_outliers(df_clean)
-
+        print(f"🔍 ПОСЛЕ imputation: колонки = {df_clean.columns.tolist()}")
+        print(f"🔍 ПОСЛЕ imputation: есть ли student_id? {'student_id' in df_clean.columns}")
         return {
             "data": safe_json_serializable(df_clean.to_dict("records")),
             "report": safe_json_serializable(report),
