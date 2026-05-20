@@ -508,6 +508,8 @@ def preprocess_sheet_impl(
 
     # === 2. Автоматическая обработка оставшихся колонок ===
     for col in list(df.columns):
+        if col == "student_id":
+            continue
         if col in processed_cols or col == user_col:
             continue
 
@@ -562,7 +564,7 @@ def preprocess_sheet_impl(
         print("⚠️ student_id уже существует")
 
     print(f"🔍 ПОСЛЕ добавления: колонки = {list(df.columns)}")
-
+    print(f"🔍 PREPROCESS_SHEET_IMPL: mapping_config = {mapping_config is not None}")
     # Перемещаем student_id в начало для удобства
     if "student_id" in df.columns:
         cols = ["student_id"] + [c for c in df.columns if c != "student_id"]

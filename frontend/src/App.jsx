@@ -794,6 +794,9 @@ function MainPage() {
     setCorrResult(null);
     setAnalysisResult(null);
     setCsvData(null);
+    if (csvDataRef) {
+      csvDataRef.current = null;
+    }
     setSheetPreview(null);
     setMappingConfig(null);
     setRawExcelData(null);
