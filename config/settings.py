@@ -1,7 +1,7 @@
-# config/settings.py
 """
 Настройки проекта (аналог settings.py в Django, но проще)
 """
+
 import os
 from pathlib import Path
 from dotenv import load_dotenv

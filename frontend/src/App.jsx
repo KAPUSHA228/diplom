@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, lazy, useRef } from "react";
 import { HashRouter, Routes, Route, Link, useLocation } from "react-router-dom";
 import SafeErrorBoundary from "./components/SafeErrorBoundary";
+import DatasetHistory from "./components/DatasetHistory";
 import {
   healthcheck,
   getExcelPreview,
@@ -28,7 +29,7 @@ const Experiments = lazy(() => import("./pages/Experiments"));
 const SubsetSelect = lazy(() => import("./pages/SubsetSelect"));
 const FeatureCombinations = lazy(() => import("./pages/FeatureCombinations"));
 import { handleImputation } from "./api";
-import { useSharedData } from "./hooks/useDatasetStore";
+import { useSharedData, useDatasetStore } from "./hooks/useDatasetStore";
 import "./styles.css";
 import { NAV, EXCLUDE_COLS } from "./utils/constants";
 import { filterServiceCols } from "./utils/csvHelpers";
@@ -143,6 +144,7 @@ function MainPage() {
     rows: [],
     rowCount: 0,
   });
+  const [historyRefreshTrigger, setHistoryRefreshTrigger] = useState(0);
   const [analysisStage, setAnalysisStage] = useState("");
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [corrResult, setCorrResult] = useState(null);
@@ -231,7 +233,22 @@ function MainPage() {
     };
   }, [analysisTaskId]);
 
-  // Функция запуска асинхронного анализа
+  const clearIndexedDB = useDatasetStore((state) => state.clearIndexedDB);
+
+  const handleClearCache = async () => {
+    if (
+      window.confirm(
+        "Очистить кеш всех загруженных данных? Это действие необратимо.",
+      )
+    ) {
+      await clearIndexedDB();
+      setCsvData(null);
+      setCsvPreview({ headers: [], rows: [], rowCount: 0 });
+      csvDataRef.current = null;
+      alert("Кеш очищен");
+    }
+  };
+
   async function onRunAnalysisAsync(params) {
     console.log("🔵 [App] Получены параметры в onRunAnalysisAsync:", params);
     const fullData = csvDataRef.current;
@@ -415,8 +432,6 @@ function MainPage() {
   const [targetColumn, setTargetColumn] = useState("");
   const [targetSelected, setTargetSelected] = useState(false);
 
-  // Служебные колонки — исключаем из выбора target И из превью
-
   // Доступные колонки для выбора target
   const targetCandidates = useMemo(() => {
     const data = csvDataRef.current;
@@ -429,7 +444,6 @@ function MainPage() {
     return filtered;
   }, [EXCLUDE_COLS, refreshFlag]);
 
-  // Отладка — временно, потом удалить
   useEffect(() => {
     console.log("=== ОТЛАДКА ПОСЛЕ ОБНОВЛЕНИЯ ===");
     console.log("csvDataRef.current?.length:", csvDataRef.current?.length);
@@ -676,6 +690,7 @@ function MainPage() {
       "[setDataAndPreview] csvDataRef.current length:",
       csvDataRef.current?.length,
     );
+    setHistoryRefreshTrigger((prev) => prev + 1);
   }
 
   /** Обработчик подтверждения маппинга из SheetMapper */
@@ -1070,7 +1085,29 @@ function MainPage() {
             </>
           )}
         </div>
-
+        {/*=== выбор датасета ===*/}
+        <DatasetHistory
+          onLoad={(data) => {
+            csvDataRef.current = data;
+            setCsvData(data.slice(0, 100));
+            setCsvPreview({
+              headers: Object.keys(data[0] || {}),
+              rows: data
+                .slice(0, 5)
+                .map((r) => Object.values(r).map((v) => String(v))),
+              rowCount: data.length,
+              riskPct: null,
+            });
+            setTargetSelected(false);
+            setTargetColumn("");
+            setSheetPreview(null);
+            setRawExcelData(null);
+            setExcelSheets([]);
+            setSelectedSheet("");
+            setHistoryRefreshTrigger((prev) => prev + 1);
+          }}
+          refreshTrigger={historyRefreshTrigger}
+        />
         {/* === ВЫБОР ЦЕЛЕВОЙ ПЕРЕМЕННОЙ === */}
         {csvData &&
           csvData.length > 0 &&
@@ -1145,6 +1182,20 @@ function MainPage() {
                     setTargetColumn("");
                     setTargetSelected(false);
                     setSheetPreview(null);
+                    setCsvPreview({
+                      headers: [],
+                      rows: [],
+                      rowCount: 0,
+                      riskPct: null,
+                    });
+                    csvDataRef.current = null;
+                    setRawExcelData(null);
+                    setExcelSheets([]);
+                    setSelectedSheet("");
+                    setError("");
+                    setCorrResult(null);
+                    setAnalysisResult(null);
+                    shared.clearData();
                   }}
                 >
                   🔄 Сбросить данные
@@ -1165,6 +1216,12 @@ function MainPage() {
                 onClick={() => setSaveModalOpen(true)}
               >
                 💾 Сохранить как эксперимент…
+              </button>
+              <button
+                onClick={handleClearCache}
+                style={{ background: "#e74c3c", color: "white" }}
+              >
+                🗑️ Очистить кеш данных
               </button>
             </div>
           </>

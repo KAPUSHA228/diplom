@@ -14,7 +14,10 @@ export function filterServiceCols(data, excludeCols) {
   return data.map((row) => {
     const filtered = {};
     for (const [key, val] of Object.entries(row)) {
-      if (!excludeCols.has(key.toLowerCase())) {
+      if (
+        !excludeCols.has(key.toLowerCase()) &&
+        key.toLowerCase() !== "student_id"
+      ) {
         filtered[key] = val;
       }
     }

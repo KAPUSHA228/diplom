@@ -1,4 +1,3 @@
-// useDatasetStore.js
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import Dexie from "dexie";
@@ -9,6 +8,7 @@ db.version(1).stores({
   datasets: "id, timestamp, rowCount",
   experiments: "++id, name, timestamp",
 });
+const MAX_DATASETS = 5;
 
 export const useDatasetStore = create(
   persist(
@@ -42,12 +42,90 @@ export const useDatasetStore = create(
 
         await db.datasets.put(record);
 
+        const allDatasets = await db.datasets.toArray();
+        const sorted = allDatasets.sort((a, b) => b.timestamp - a.timestamp);
+
+        if (sorted.length > MAX_DATASETS) {
+          const idsToDelete = sorted.slice(MAX_DATASETS).map((ds) => ds.id);
+          if (idsToDelete.length) {
+            console.log(
+              `🗑️ Удаляем старые записи: ${idsToDelete.length} шт. (оставляем ${MAX_DATASETS})`,
+            );
+            await db.datasets.bulkDelete(idsToDelete);
+            console.log(`✅ Очистка завершена`);
+          }
+        }
+
         set({
           currentDatasetId: datasetId,
           metadata: record.metadata,
         });
       },
 
+      getAllDatasets: async () => {
+        try {
+          const all = await db.datasets.toArray();
+          // Сортируем по времени (новые сверху)
+          return all.sort((a, b) => b.timestamp - a.timestamp);
+        } catch (err) {
+          console.error("Failed to get datasets:", err);
+          return [];
+        }
+      },
+      loadDatasetById: async (id) => {
+        try {
+          const record = await db.datasets.get(id);
+          if (record) {
+            set({
+              currentDatasetId: id,
+              metadata: record.metadata,
+            });
+            return record.data;
+          }
+          return null;
+        } catch (err) {
+          console.error("Failed to load dataset:", err);
+          return null;
+        }
+      },
+
+      deleteDatasetById: async (id) => {
+        try {
+          await db.datasets.delete(id);
+          // Если удалили текущий — сбрасываем состояние
+          const { currentDatasetId } = get();
+          if (currentDatasetId === id) {
+            set({ currentDatasetId: null, metadata: {} });
+          }
+          return true;
+        } catch (err) {
+          console.error("Failed to delete dataset:", err);
+          return false;
+        }
+      },
+
+      clearIndexedDB: async () => {
+        try {
+          const beforeCount = await db.datasets.count();
+
+          await db.datasets.clear();
+          // Также очищаем состояние стора
+          set({
+            currentDatasetId: null,
+            metadata: {},
+            hydrated: false,
+            isLoading: false,
+            isHydrating: false,
+          });
+          console.log(
+            `✅ IndexedDB полностью очищена. Удалено записей: ${beforeCount}`,
+          );
+          return true;
+        } catch (err) {
+          console.error("❌ Ошибка очистки IndexedDB:", err);
+          return false;
+        }
+      },
       getCurrentData: async () => {
         const { currentDatasetId } = get();
         if (!currentDatasetId) return null;
