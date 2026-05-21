@@ -7,6 +7,7 @@ const db = new Dexie("ARM_Datasets");
 db.version(1).stores({
   datasets: "id, timestamp, rowCount",
   experiments: "++id, name, timestamp",
+  analysisResults: "id, timestamp",
 });
 const MAX_DATASETS = 5;
 
@@ -139,6 +140,43 @@ export const useDatasetStore = create(
         }
       },
 
+      saveAnalysisResult: async (taskId, result) => {
+        try {
+          console.log("💾 Сохраняем результат в IndexedDB, id=", taskId);
+
+          await db.analysisResults.put({
+            id: taskId,
+            result: result,
+            timestamp: Date.now(),
+          });
+          console.log("💾 Сохранено успешно");
+
+          return true;
+        } catch (err) {
+          console.error("Failed to save analysis result:", err);
+          return false;
+        }
+      },
+      setCurrentDatasetId: (id) => {
+        set({ currentDatasetId: id });
+      },
+      loadAnalysisResult: async (taskId) => {
+        try {
+          const record = await db.analysisResults.get(taskId);
+          return record?.result || null;
+        } catch (err) {
+          console.error("Failed to load analysis result:", err);
+          return null;
+        }
+      },
+
+      deleteAnalysisResult: async (taskId) => {
+        try {
+          await db.analysisResults.delete(taskId);
+        } catch (err) {
+          console.error("Failed to delete analysis result:", err);
+        }
+      },
       loadDataToMemory: async () => {
         const { currentDatasetId, isLoading } = get();
         if (!currentDatasetId || isLoading) return null;

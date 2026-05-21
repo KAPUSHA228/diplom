@@ -8,16 +8,14 @@
  * @param {Set} excludeCols - Set с именами колонок для исключения
  * @returns {Array} отфильтрованные данные
  */
-export function filterServiceCols(data, excludeCols) {
+export function filterServiceCols(data, EXCLUDE_COLS) {
   if (!data || !data.length) return data;
-
   return data.map((row) => {
     const filtered = {};
     for (const [key, val] of Object.entries(row)) {
-      if (
-        !excludeCols.has(key.toLowerCase()) &&
-        key.toLowerCase() !== "student_id"
-      ) {
+      if (key === "student_id") {
+        filtered[key] = val;
+      } else if (!EXCLUDE_COLS.has(key.toLowerCase())) {
         filtered[key] = val;
       }
     }

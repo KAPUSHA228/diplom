@@ -185,6 +185,9 @@ function MainPage() {
         setAnalysisStatus(data.status);
 
         if (data.status === "SUCCESS") {
+          await saveAnalysisResult(analysisTaskId, data.result);
+          sessionStorage.setItem("has_unviewed_result", "true");
+          sessionStorage.setItem("unviewed_result_id", analysisTaskId);
           console.log("=== ПОЛНЫЙ ОТВЕТ ОТ БЭКЕНДА ===", data.result);
           console.log("=== target_col в ответе ===", data.result?.target_col);
           console.log("🔵 ВРЕМЯ ПОЛУЧЕНИЯ:", new Date().toLocaleTimeString());
@@ -234,7 +237,15 @@ function MainPage() {
   }, [analysisTaskId]);
 
   const clearIndexedDB = useDatasetStore((state) => state.clearIndexedDB);
-
+  const saveAnalysisResult = useDatasetStore(
+    (state) => state.saveAnalysisResult,
+  );
+  const loadAnalysisResult = useDatasetStore(
+    (state) => state.loadAnalysisResult,
+  );
+  const deleteAnalysisResult = useDatasetStore(
+    (state) => state.deleteAnalysisResult,
+  );
   const handleClearCache = async () => {
     if (
       window.confirm(
@@ -471,18 +482,60 @@ function MainPage() {
 
   // Восстанавливаем задачу при монтировании компонента
   useEffect(() => {
-    const savedTaskId = sessionStorage.getItem("active_analysis_task_id");
-    const savedTarget = sessionStorage.getItem("active_analysis_target");
-    console.log("🔵 RESTORE EFFECT: savedTaskId =", savedTaskId);
-    if (savedTaskId && !analysisTaskId && !analysisResult) {
-      console.log("🔄 Восстановление задачи:", savedTaskId);
-      setAnalysisTaskId(savedTaskId);
-      setBusy(true);
-      if (savedTarget) {
-        setTargetColumn(savedTarget);
-        setTargetSelected(true);
+    const restoreState = async () => {
+      console.log("🔵 RESTORE: анализ состояния");
+      console.log("  - analysisResult:", analysisResult);
+      console.log("  - analysisTaskId:", analysisTaskId);
+      // 1. Проверяем завершённый, но непросмотренный результат
+      const hasUnviewed = sessionStorage.getItem("has_unviewed_result");
+      const unviewedId = sessionStorage.getItem("unviewed_result_id");
+      console.log("  - has_unviewed_result:", hasUnviewed);
+      console.log("  - unviewed_result_id:", unviewedId);
+
+      if (
+        hasUnviewed === "true" &&
+        !analysisResult &&
+        !analysisTaskId &&
+        unviewedId
+      ) {
+        console.log(
+          "🔵 RESTORE: пытаюсь загрузить результат из IndexedDB, id=",
+          unviewedId,
+        );
+        const result = await loadAnalysisResult(unviewedId);
+        console.log(
+          "🔵 RESTORE: загруженный результат:",
+          result ? "есть" : "null",
+        );
+        if (result) {
+          console.log("🔵 RESTORE: результат успешно загружен");
+          setAnalysisResult(result);
+          sessionStorage.removeItem("has_unviewed_result");
+          sessionStorage.removeItem("unviewed_result_id");
+          await deleteAnalysisResult(unviewedId);
+          console.log("🔵 RESTORE: флаги очищены");
+          return;
+        } else {
+          console.log("🔵 RESTORE: результат не найден, очищаю флаги");
+          sessionStorage.removeItem("has_unviewed_result");
+          sessionStorage.removeItem("unviewed_result_id");
+        }
       }
-    }
+
+      const savedTaskId = sessionStorage.getItem("active_analysis_task_id");
+      const savedTarget = sessionStorage.getItem("active_analysis_target");
+      console.log("🔵 RESTORE EFFECT: savedTaskId =", savedTaskId);
+      if (savedTaskId && !analysisTaskId && !analysisResult) {
+        console.log("🔄 Восстановление задачи:", savedTaskId);
+        setAnalysisTaskId(savedTaskId);
+        setBusy(true);
+        if (savedTarget) {
+          setTargetColumn(savedTarget);
+          setTargetSelected(true);
+        }
+      }
+    };
+    restoreState();
   }, [analysisResult, analysisTaskId]);
 
   // Эффект для опроса статуса корреляции
@@ -649,28 +702,32 @@ function MainPage() {
 
   /** Вспомогательная функция для обновления превью и данных */
   function setDataAndPreview(data) {
-    if (!data || !data.length) return;
-
-    // Сначала фильтруем служебные колонки
-    console.log(
-      "[setDataAndPreview] Before filter, columns:",
-      Object.keys(data[0] || {}),
-    );
+    if (!data || !data.length) {
+      console.log("🔍 setDataAndPreview: нет данных, выход");
+      return;
+    }
+    console.log("🔍 setDataAndPreview: начало, data.length =", data.length);
 
     let filtered = filterServiceCols(data, EXCLUDE_COLS);
 
     console.log(
-      "[setDataAndPreview] After filter, columns:",
+      "🔍 setDataAndPreview: после filterServiceCols, filtered.length =",
+      filtered.length,
+    );
+    console.log(
+      "🔍 setDataAndPreview: колонки filtered:",
       Object.keys(filtered[0] || {}),
     );
-    // Сохраняем отфильтрованные данные в ref
-    csvDataRef.current = filtered;
-    // В состояние — первые 100 строк для UI
-    setCsvData(filtered.slice(0, 100));
 
-    // Обновляем общий датасет
+    csvDataRef.current = filtered;
+    setCsvData(filtered.slice(0, 100));
+    console.log(
+      "🔍 setDataAndPreview: csvData установлен, длина =",
+      filtered.slice(0, 100).length,
+    );
     shared.updateData(filtered);
     setRefreshFlag((prev) => prev + 1);
+
     // Обновляем превью
     if (filtered.length > 0) {
       const headers = Object.keys(filtered[0]);
@@ -678,6 +735,14 @@ function MainPage() {
         .slice(0, 5)
         .map((r) => headers.map((h) => String(r[h] ?? "")));
       setCsvPreview({ headers, rows: previewRows, rowCount: filtered.length });
+      console.log(
+        "🔍 setDataAndPreview: превью установлено, rowCount:",
+        filtered.length,
+      );
+      console.log(
+        "🔍 setDataAndPreview: превью установлено, headers =",
+        headers,
+      );
     } else {
       setCsvPreview({ headers: [], rows: [], rowCount: 0, riskPct: null });
     }
@@ -691,6 +756,11 @@ function MainPage() {
       csvDataRef.current?.length,
     );
     setHistoryRefreshTrigger((prev) => prev + 1);
+    console.log("🔍 setDataAndPreview: csvData установлен?", !!csvData);
+    console.log(
+      "🔍 setDataAndPreview: rawExcelData должен быть null, но сейчас:",
+      rawExcelData,
+    );
   }
 
   /** Обработчик подтверждения маппинга из SheetMapper */
@@ -723,13 +793,25 @@ function MainPage() {
     setError("");
     try {
       const res = await handleImputation(rawExcelData, strategy, threshold);
-      console.log("🔍 ПОЛУЧЕНО С БЭКЕНДА:", res);
+      console.log(
+        "🔍 handleEnrichmentConfirm: данные получены",
+        res.data?.length,
+      );
       console.log("🔍 КОЛОНКИ В ОТВЕТЕ:", Object.keys(res.data[0] || {}));
+      console.log(
+        "🔍 res.data тип:",
+        Array.isArray(res.data) ? "массив" : typeof res.data,
+      );
+      console.log("🔍 res.data первые 2 элемента:", res.data?.slice(0, 2));
       setDataAndPreview(res.data);
+      console.log("🔍 Сброс состояний...");
       setRawExcelData(null);
       setSheetPreview(null);
       setSheetTypeInfo(null);
       setTargetSelected(false);
+      console.log(
+        "🔍 После сброса: rawExcelData=null, sheetPreview=null, sheetTypeInfo=null",
+      );
     } catch (e) {
       setError("Ошибка обогащения: " + e.message);
     } finally {
@@ -740,11 +822,29 @@ function MainPage() {
   /** Обработчик пропуска обогащения */
   function onEnrichmentSkip() {
     if (!rawExcelData) return;
+    console.log(
+      "🔍 handleEnrichmentSkip: пропускаем обогащение",
+      rawExcelData.length,
+    );
+    console.log(
+      "🔍 res.data тип:",
+      Array.isArray(rawExcelData.data) ? "массив" : typeof rawExcelData.data,
+    );
+    console.log(
+      "🔍 res.data первые 2 элемента:",
+      rawExcelData.data?.slice(0, 2),
+    );
     setDataAndPreview(rawExcelData);
+
+    console.log("🔍 Сброс состояний...");
     setRawExcelData(null);
     setSheetPreview(null);
     setSheetTypeInfo(null);
     setTargetSelected(false);
+
+    console.log(
+      "🔍 После сброса: rawExcelData=null, sheetPreview=null, sheetTypeInfo=null",
+    );
   }
 
   /** Загружает превью выбранного листа Excel */
@@ -1087,7 +1187,7 @@ function MainPage() {
         </div>
         {/*=== выбор датасета ===*/}
         <DatasetHistory
-          onLoad={(data) => {
+          onLoad={(data, datasetId) => {
             csvDataRef.current = data;
             setCsvData(data.slice(0, 100));
             setCsvPreview({
@@ -1098,12 +1198,17 @@ function MainPage() {
               rowCount: data.length,
               riskPct: null,
             });
+            setRefreshFlag((prev) => prev + 1);
+
+            useDatasetStore.getState().setCurrentDatasetId(datasetId);
             setTargetSelected(false);
             setTargetColumn("");
             setSheetPreview(null);
             setRawExcelData(null);
             setExcelSheets([]);
             setSelectedSheet("");
+            setAnalysisResult(null);
+            setCorrResult(null);
             setHistoryRefreshTrigger((prev) => prev + 1);
           }}
           refreshTrigger={historyRefreshTrigger}
