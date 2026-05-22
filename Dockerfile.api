@@ -5,14 +5,18 @@ WORKDIR /app
 
 # Устанавливаем только build-зависимости
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc g++ && \
+    gcc \
+    g++ \
+    make \
+    cmake \
+    curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Копируем только requirements
 COPY requirements_base.txt requirements_api.txt ./
 
-# Создаём wheel-пакеты (без установки)
-RUN pip wheel --no-deps --wheel-dir /wheels -r requirements_api.txt
+# Устанавливаем зависимости в отдельную директорию
+RUN pip install --user --no-warn-script-location -r requirements_api.txt
 
 # === Stage 2: Production ===
 FROM python:3.11-slim
@@ -24,22 +28,18 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Копируем wheels из builder
-COPY --from=builder /wheels /wheels
-COPY requirements_base.txt requirements_api.txt ./
-
-# Устанавливаем из wheels
-RUN pip install --find-links /wheels -r requirements_api.txt && \
-    rm -rf /wheels
+## Копируем установленные пакеты из builder
+COPY --from=builder /root/.local /root/.local
 
 # Копируем код
 COPY . .
 
 # Создаём директории
-RUN mkdir -p models logs/drift_reports experiments analysis_data/synthetic analysis_data/monitoring
+RUN mkdir -p models logs/drift_reports experiments analysis_data/synthetic analysis_data/monitoring /app/ray_temp
 
+ENV PATH=/root/.local/bin:$PATH
 ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
-CMD ["uvicorn", "api.gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "api.gateway.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

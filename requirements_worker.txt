@@ -1,2 +1,1 @@
 -r requirements_base.txt
-# celery уже в base, больше ничего не нужно

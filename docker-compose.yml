@@ -25,7 +25,25 @@ services:
       timeout: 3s
       retries: 5
 
-  # ==================== ML-модуль ====================
+  # ==================== ML-модуль (Ray) ====================
+
+  ray-head:
+    image: rayproject/ray:2.9.0-py311
+    user: root
+    shm_size: "4g"
+    ports:
+      - "8265:8265"
+      - "10001:10001"
+    command: ray start --head --port=6379 --dashboard-host=0.0.0.0 --num-cpus=4 --disable-usage-stats --temp-dir=/tmp/ray --block
+    environment:
+      - RAY_TMPDIR=/tmp/ray
+    volumes:
+      - ray_data:/tmp/ray
+    healthcheck:
+      test: [ "CMD", "ray", "status" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   ml-api:
     build:
@@ -36,11 +54,14 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      ray-head:
+        condition: service_healthy
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DEBUG=false
       - PYTHONPATH=/app
     volumes:
+      - ./:/app
       - ml-models:/app/models
       - ml-logs:/app/logs
       - ml-experiments:/app/experiments
@@ -51,25 +72,24 @@ services:
       retries: 3
       start_period: 60s
 
-  ml-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
+  ray-worker:
+    image: rayproject/ray:2.9.0-py311
+    user: root
+    shm_size: "4g"
     depends_on:
-      redis:
+      ray-head:
         condition: service_healthy
-      ml-api:
-        condition: service_healthy
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-      - PYTHONPATH=/app
+    command: ray start --address=ray-head:6379 --num-cpus=4 --temp-dir=/tmp/ray --block
     volumes:
-      - ml-models:/app/models
-      - ml-logs:/app/logs
-      - ml-experiments:/app/experiments
+      - ./:/app
+      - ray_data:/tmp/ray
+    environment:
+      - PYTHONPATH=/app
+      - RAY_TMPDIR=/tmp/ray
 
 # ==================== Volumes ====================
 volumes:
   ml-models:        # Сохранённые модели (.pkl + .json)
   ml-logs:          # Логи, метрики, отчёты дрейфа
   ml-experiments:   # Сохранённые эксперименты
+  ray_data:

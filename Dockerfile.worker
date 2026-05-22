@@ -1,31 +1,15 @@
-# === Stage 1: Builder ===
-FROM python:3.11-slim AS builder
+FROM rayproject/ray:2.9.0-py311
 
+USER root
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ && \
-    rm -rf /var/lib/apt/lists/*
-
+# Устанавливаем дополнительные Python‑зависимости
 COPY requirements_base.txt requirements_worker.txt ./
-RUN pip wheel --no-deps --wheel-dir /wheels -r requirements_worker.txt
+RUN pip install --no-cache-dir -r requirements_base.txt
 
-# === Stage 2: Production ===
-FROM python:3.11-slim
-
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/*
-
-COPY --from=builder /wheels /wheels
-COPY requirements_base.txt requirements_worker.txt ./
-
-RUN pip install --find-links /wheels -r requirements_worker.txt && \
-    rm -rf /wheels
-
-# Копируем весь код
+# Копируем код вашего приложения (ml_core, workers)
 COPY . .
 
 ENV PYTHONPATH=/app
 
-CMD ["celery", "-A", "celery_app", "worker", "--loglevel=info", "--concurrency=4", "--pool=prefork"]
+CMD ["ray", "start", "--address=ray-head:6379", "--num-cpus=4", "--block"]

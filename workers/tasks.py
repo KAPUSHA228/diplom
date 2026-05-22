@@ -23,9 +23,26 @@ _ray_initialized = False
 
 def ensure_ray():
     """Гарантирует инициализацию Ray"""
+
     global _ray_initialized
     if not _ray_initialized and not ray.is_initialized():
-        ray.init(address="auto", ignore_reinit_error=True)
+
+        ray_address = os.environ.get("RAY_ADDRESS")
+        if ray_address:
+            try:
+                ray.init(address=ray_address, ignore_reinit_error=True)
+                print(f"✅ Ray подключился к внешнему кластеру ({ray_address})")
+            except Exception as e:
+                print(f"❌ Ошибка подключения к Ray: {e}")
+                raise
+        else:
+            # Локальный запуск: создаём новый кластер
+            try:
+                ray.init(ignore_reinit_error=True, num_cpus=4)
+                print("✅ Ray запущен локально")
+            except Exception as e:
+                print(f"❌ Ошибка запуска локального Ray: {e}")
+                raise
         _ray_initialized = True
     return ray.is_initialized()
 

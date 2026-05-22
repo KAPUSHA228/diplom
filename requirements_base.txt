@@ -8,6 +8,7 @@ matplotlib>=3.6.0
 plotly>=5.14.0
 kaleido
 openpyxl
-celery[redis]>=5.3.0
+ray[default]==2.9.0
 python-dotenv>=1.0.0
 pydantic>=2.0.0
+redis>=5.0.0

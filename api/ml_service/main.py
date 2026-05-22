@@ -24,7 +24,8 @@ from .schemas import (
 )
 from shared.utils import safe_json_serializable
 from shared.utils import scrub
-from api.ml_service.websocket import router as websocket_router
+
+# from api.ml_service.websocket import router as websocket_router
 
 # Хранилище активных задач (для отмены)
 active_tasks = {}
@@ -358,6 +359,11 @@ async def select_subset(request: SubsetRequest):
 async def full_analysis_async(request: AnalysisRequest):
     """Запуск полного анализа через Ray"""
     try:
+        print("🔵 full_analysis_async: вызываем ensure_ray()")
+        from workers.tasks import ensure_ray
+
+        ensure_ray()
+        print("🔵 full_analysis_async: после ensure_ray()")
         # Создаём Actor для прогресса
         progress_actor = ProgressActor.remote()
         print("🔵 в async [BACKEND] Получен запрос:")
@@ -480,7 +486,7 @@ async def cancel_full_analysis(task_id: str):
 
 app.include_router(router_ml)
 app.include_router(router_analyze_ml)
-app.include_router(websocket_router)
+# app.include_router(websocket_router)
 
 if __name__ == "__main__":
     import uvicorn
