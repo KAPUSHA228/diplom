@@ -43,3 +43,5 @@ class ImputationRequest(BaseModel):
     df: List[Dict[str, Any]]
     strategy: str = "auto"
     threshold: float = 30.0
+    outlier_method: str = "iqr"
+    outlier_threshold: float = 1.5

@@ -10,6 +10,14 @@ const STRATEGIES = [
   { value: "interpolate", label: "Интерполяция" },
   { value: "drop_rows", label: "Удалить строки" },
 ];
+const OUTLIER_METHODS = [
+  { value: "iqr", label: "IQR (межквартильный размах)", defaultThreshold: 1.5 },
+  {
+    value: "zscore",
+    label: "Z‑score (стандартное отклонение)",
+    defaultThreshold: 3.0,
+  },
+];
 
 export default function Imputation() {
   const {
@@ -21,14 +29,18 @@ export default function Imputation() {
   const [file, setFile] = useState(null);
   const [fileData, setFileData] = useState(null);
   const [strategy, setStrategy] = useState("auto");
+  const [columnDropThreshold, setColumnDropThreshold] = useState(30);
+  const [outlierMethod, setOutlierMethod] = useState("iqr");
+  const [outlierThreshold, setOutlierThreshold] = useState(1.5);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-
   const activeData = fileData || sharedData;
+
   if (loading) {
     return <div className="card">Загрузка данных...</div>;
   }
+
   async function onFileChange(e) {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -50,7 +62,13 @@ export default function Imputation() {
     setError("");
     setResult(null);
     try {
-      const res = await handleImputation(activeData, strategy);
+      const res = await handleImputation(
+        activeData,
+        strategy,
+        columnDropThreshold,
+        outlierMethod,
+        outlierThreshold,
+      );
       setResult(res);
     } catch (err) {
       setError("Ошибка: " + err.message);
@@ -58,6 +76,13 @@ export default function Imputation() {
       setBusy(false);
     }
   }
+
+  const handleMethodChange = (method) => {
+    setOutlierMethod(method);
+    const def =
+      OUTLIER_METHODS.find((m) => m.value === method)?.defaultThreshold || 1.5;
+    setOutlierThreshold(def);
+  };
 
   return (
     <div className="card">
@@ -98,7 +123,7 @@ export default function Imputation() {
       {/* Стратегия */}
       <div style={{ marginBottom: 12 }}>
         <label>
-          <b>Стратегия:</b>
+          <b>Стратегия обработки пропусков:</b>
         </label>
         <div className="strategy-grid" style={{ marginTop: 8 }}>
           {STRATEGIES.map((s) => (
@@ -116,6 +141,71 @@ export default function Imputation() {
               {s.label}
             </label>
           ))}
+        </div>
+      </div>
+
+      {/* Дополнительные параметры для стратегии Auto: порог удаления столбца */}
+      {strategy === "auto" && (
+        <div style={{ marginBottom: 12 }}>
+          <label>
+            <b>Порог удаления столбца (% пропусков):</b> {columnDropThreshold}
+            <input
+              type="range"
+              min="10"
+              max="70"
+              step="5"
+              value={columnDropThreshold}
+              onChange={(e) => setColumnDropThreshold(parseInt(e.target.value))}
+              style={{ width: "100%" }}
+            />
+          </label>
+          <p className="muted" style={{ fontSize: 12 }}>
+            Если доля пропусков в столбце превышает этот порог, столбец будет
+            удалён.
+          </p>
+        </div>
+      )}
+
+      {/* Детекция выбросов – выбор метода и порога */}
+      <div style={{ marginBottom: 12 }}>
+        <label>
+          <b>Метод детекции выбросов:</b>
+        </label>
+        <div className="strategy-grid" style={{ marginTop: 8 }}>
+          {OUTLIER_METHODS.map((m) => (
+            <label
+              key={m.value}
+              className={`strategy-option ${outlierMethod === m.value ? "selected" : ""}`}
+            >
+              <input
+                type="radio"
+                name="outlier-method"
+                value={m.value}
+                checked={outlierMethod === m.value}
+                onChange={() => handleMethodChange(m.value)}
+              />
+              {m.label}
+            </label>
+          ))}
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            <b>Порог чувствительности:</b> {outlierThreshold}
+            <input
+              type="range"
+              min="0.5"
+              max="5.0"
+              step="0.1"
+              value={outlierThreshold}
+              onChange={(e) => setOutlierThreshold(parseFloat(e.target.value))}
+              style={{ width: "100%" }}
+            />
+          </label>
+          <p className="muted" style={{ fontSize: 12 }}>
+            {outlierMethod === "iqr"
+              ? "IQR: значение > Q₃ + k·IQR или < Q₁ − k·IQR считается выбросом (обычно k=1.5)."
+              : "Z‑score: значение, отклоняющееся более чем на k стандартных отклонений, считается выбросом (обычно k=3.0)."}
+          </p>
         </div>
       </div>
 
@@ -140,6 +230,13 @@ export default function Imputation() {
           <p>
             Обработано: <b>{result.report?.final_shape?.[0] || "?"}</b> строк,{" "}
             <b>{result.report?.final_shape?.[1] || "?"}</b> колонок
+          </p>
+          <p className="muted" style={{ fontSize: 12 }}>
+            Выбросы обнаружены методом{" "}
+            <b>{result.outlier_method === "iqr" ? "IQR" : "Z‑score"}</b> (порог
+            = {result.outlier_threshold})<br />
+            {strategy === "auto" &&
+              `Порог удаления столбцов по пропускам: ${columnDropThreshold}%`}
           </p>
           {result.report?.actions?.length > 0 && (
             <details open>

@@ -202,13 +202,15 @@ async def handle_imputation(request: ImputationRequest):
         print(f"🔍 ДО imputation: есть ли student_id? {'student_id' in df.columns}")
         # df, _ = preprocess_sheet(df, sheet_group="numeric")
         df_clean, report = handle_missing_values(df, strategy=request.strategy, threshold=request.threshold)
-        outliers = detect_outliers(df_clean)
+        outliers = detect_outliers(df_clean, method=request.outlier_method, threshold=request.outlier_threshold)
         print(f"🔍 ПОСЛЕ imputation: колонки = {df_clean.columns.tolist()}")
         print(f"🔍 ПОСЛЕ imputation: есть ли student_id? {'student_id' in df_clean.columns}")
         return {
             "data": safe_json_serializable(df_clean.to_dict("records")),
             "report": safe_json_serializable(report),
             "outliers": safe_json_serializable({k: v for k, v in outliers.items() if v.get("n_outliers", 0) > 0}),
+            "outlier_method": request.outlier_method,
+            "outlier_threshold": request.outlier_threshold,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -384,12 +384,20 @@ export async function createFeatureCombinations(
 export async function handleImputation(
   data,
   strategy = "auto",
-  threshold = 30.0,
+  columnDropThreshold = 30.0,
+  outlierMethod = "iqr",
+  outlierThreshold = 1.5,
 ) {
   return request("/api/v1/analyze/imputation/handle", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ df: data, strategy, threshold }),
+    body: JSON.stringify({
+      df: data,
+      strategy: strategy,
+      threshold: columnDropThreshold,
+      outlierMethod: outlierMethod,
+      outlierThreshold: outlierThreshold,
+    }),
   });
 }
 
