@@ -27,10 +27,10 @@ export default function Experiments() {
     setError("");
     try {
       const data = await getExperiment(selected);
-      console.log("🔍 ДАННЫЕ ЭКСПЕРИМЕНТА:", data);
-      console.log("🔍 data.config:", data?.config);
-      console.log("🔍 data.config.model_name:", data?.config?.model_name);
-      console.log("🔍 data.model_name:", data?.model_name);
+      console.log("ДАННЫЕ ЭКСПЕРИМЕНТА:", data);
+      console.log("data.config:", data?.config);
+      console.log("data.config.model_name:", data?.config?.model_name);
+      console.log("data.model_name:", data?.model_name);
       setDetail(data);
     } catch (e) {
       setError(String(e.message || e));
@@ -55,14 +55,10 @@ export default function Experiments() {
       return timestamp;
     }
   };
-  console.log("🔍 Все эксперименты:", experiments);
-  console.log(
-    "🔍 exp21 config:",
-    experiments.find((e) => e.name === "exp21")?.config,
-  );
+  console.log("Все эксперименты:", experiments);
   return (
     <div className="card">
-      <h2>📁 История экспериментов</h2>
+      <h2>История экспериментов</h2>
       <p className="muted">
         Чтобы сохранить анализ, на вкладке «Главное» после завершения нажмите
         «Сохранить как эксперимент…» (откроется окно с названием и описанием).
@@ -71,9 +67,9 @@ export default function Experiments() {
       <div style={{ marginTop: 16 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button onClick={onLoadList} disabled={busy}>
-            🔄 Загрузить список
+            Загрузить список
           </button>
-          {busy && <span className="muted">⏳ Загрузка...</span>}
+          {busy && <span className="muted">Загрузка...</span>}
         </div>
 
         {error && <p className="error">{error}</p>}
@@ -143,7 +139,7 @@ export default function Experiments() {
                 ))}
               </select>
               <button onClick={onLoadDetail} disabled={!selected || busy}>
-                📖 Загрузить детали
+                Загрузить детали
               </button>
             </div>
           </>
@@ -175,7 +171,7 @@ export default function Experiments() {
                 marginBottom: 16,
               }}
             >
-              <h3 style={{ margin: 0 }}>📄 {detail.name}</h3>
+              <h3 style={{ margin: 0 }}>{detail.name}</h3>
               <span className="muted" style={{ fontSize: 12 }}>
                 {formatDate(detail.timestamp)}
               </span>
@@ -192,7 +188,7 @@ export default function Experiments() {
             >
               {/* Конфигурация анализа */}
               <div>
-                <h4 style={{ margin: "0 0 8px 0" }}>⚙️ Параметры анализа</h4>
+                <h4 style={{ margin: "0 0 8px 0" }}>Параметры анализа</h4>
                 <div
                   style={{
                     background: "var(--bg)",
@@ -327,7 +323,7 @@ export default function Experiments() {
 
               {/* Метрики */}
               <div>
-                <h4 style={{ margin: "0 0 8px 0" }}>📊 Метрики модели</h4>
+                <h4 style={{ margin: "0 0 8px 0" }}>Метрики модели</h4>
                 <div
                   style={{
                     background: "var(--bg)",
@@ -415,7 +411,7 @@ export default function Experiments() {
             {detail.features && detail.features.length > 0 && (
               <div style={{ marginBottom: 12 }}>
                 <h4 style={{ margin: "0 0 6px 0" }}>
-                  🧬 Признаки ({detail.features.length})
+                  Признаки ({detail.features.length})
                 </h4>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {detail.features.map((f, i) => (
@@ -440,9 +436,7 @@ export default function Experiments() {
             {detail.metrics?.cv_results &&
               Object.keys(detail.metrics.cv_results).length > 0 && (
                 <div style={{ marginBottom: 12 }}>
-                  <h4 style={{ margin: "0 0 6px 0" }}>
-                    📋 Кросс-валидация (F1)
-                  </h4>
+                  <h4 style={{ margin: "0 0 6px 0" }}>Кросс-валидация (F1)</h4>
                   <div className="table-wrap">
                     <table style={{ fontSize: 13 }}>
                       <thead>
@@ -479,7 +473,7 @@ export default function Experiments() {
                   fontSize: 13,
                 }}
               >
-                📝 {detail.description}
+                {detail.description}
               </p>
             )}
           </div>

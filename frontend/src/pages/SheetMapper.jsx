@@ -178,7 +178,7 @@ export default function SheetMapper({ preview, onConfirm, onSkip }) {
 
   return (
     <div className="card sheet-mapper">
-      <h2>⚙️ Настройка обработки текстовых данных</h2>
+      <h2>Настройка обработки текстовых данных</h2>
       <p className="muted">
         Категория листа: <b>{preview.group_label || detectedType}</b>
         {" · "}Найдено колонок с текстом: <b>{stringCols.length}</b>. Укажите,
@@ -190,7 +190,7 @@ export default function SheetMapper({ preview, onConfirm, onSkip }) {
           <div className="mapper-header">
             <label>
               <b>
-                📁 {group.columns.length === 1 ? "Колонка" : "Группа"} (
+                {group.columns.length === 1 ? "Колонка" : "Группа"} (
                 {group.columns.length})
               </b>
               <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
@@ -203,7 +203,7 @@ export default function SheetMapper({ preview, onConfirm, onSkip }) {
                   onClick={() => ungroup(group.id)}
                   style={{ fontSize: 12 }}
                 >
-                  🔓 Разгруппировать всё
+                  Разгруппировать всё
                 </button>
               )}
               <select
@@ -213,14 +213,14 @@ export default function SheetMapper({ preview, onConfirm, onSkip }) {
                 }
               >
                 {isMultipleSheet ? (
-                  <option value="split">✂️ Разделить (Multiple Choice)</option>
+                  <option value="split">Разделить (Multiple Choice)</option>
                 ) : (
                   <>
-                    <option value="ordinal">🔢 Ordinal</option>
-                    <option value="one_hot">📊 One-Hot</option>
+                    <option value="ordinal">Ordinal</option>
+                    <option value="one_hot">One-Hot</option>
                   </>
                 )}
-                <option value="skip">🗑️ Пропустить</option>
+                <option value="skip">Пропустить</option>
               </select>
             </div>
           </div>
@@ -278,7 +278,7 @@ export default function SheetMapper({ preview, onConfirm, onSkip }) {
 
       <div className="row" style={{ marginTop: 20 }}>
         <button className="primary" onClick={handleApply}>
-          ✅ Применить и загрузить данные
+          Применить и загрузить данные
         </button>
         <button onClick={onSkip}>⏭️ Пропустить (авто-обработка)</button>
       </div>

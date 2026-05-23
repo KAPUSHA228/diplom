@@ -4,11 +4,11 @@ import { parseFile } from "../utils/parseFile";
 import { useDatasetLoader } from "../hooks/useDatasetLoader";
 
 const STRATEGIES = [
-  { value: "auto", label: "🤖 Авто" },
-  { value: "median", label: "📊 Медиана" },
-  { value: "mean", label: "🔢 Среднее" },
-  { value: "interpolate", label: "↕️ Интерполяция" },
-  { value: "drop_rows", label: "🗑️ Удалить строки" },
+  { value: "auto", label: "Авто" },
+  { value: "median", label: "Медиана" },
+  { value: "mean", label: "Среднее" },
+  { value: "interpolate", label: "Интерполяция" },
+  { value: "drop_rows", label: "Удалить строки" },
 ];
 
 export default function Imputation() {
@@ -27,7 +27,7 @@ export default function Imputation() {
 
   const activeData = fileData || sharedData;
   if (loading) {
-    return <div className="card">⏳ Загрузка данных...</div>;
+    return <div className="card">Загрузка данных...</div>;
   }
   async function onFileChange(e) {
     const f = e.target.files?.[0];
@@ -61,7 +61,7 @@ export default function Imputation() {
 
   return (
     <div className="card">
-      <h2>🔧 Обработка пропусков и выбросов</h2>
+      <h2>Обработка пропусков и выбросов</h2>
 
       {/* Данные */}
       <div style={{ marginBottom: 12 }}>
@@ -75,7 +75,7 @@ export default function Imputation() {
               marginBottom: 8,
             }}
           >
-            ✅ Используются данные с главной вкладки:{" "}
+            Используются данные с главной вкладки:{" "}
             <b>{sharedData.length} строк</b>, {sharedCols.length} колонок
           </div>
         )}
@@ -85,12 +85,12 @@ export default function Imputation() {
         <input type="file" accept=".csv,.xlsx,.xls" onChange={onFileChange} />
         {fileData && (
           <span className="ok" style={{ marginLeft: 8 }}>
-            ✅ Загружено: {fileData.length} строк
+            Загружено: {fileData.length} строк
           </span>
         )}
         {file && (
           <span className="ok" style={{ marginLeft: 8 }}>
-            📄 {file.name}
+            {file.name}
           </span>
         )}
       </div>
@@ -125,7 +125,7 @@ export default function Imputation() {
         onClick={onRun}
         disabled={busy || !activeData}
       >
-        {busy ? "⏳ Обработка..." : "🔧 Обработать"}
+        {busy ? "Обработка..." : "Обработать"}
       </button>
 
       {error && (

@@ -71,7 +71,7 @@ export default function FeatureCombinations() {
   }, [activeData]);
 
   if (loading) {
-    return <div className="card">⏳ Загрузка данных...</div>;
+    return <div className="card">Загрузка данных...</div>;
   }
   async function onFileChange(e) {
     const f = e.target.files?.[0];
@@ -125,7 +125,7 @@ export default function FeatureCombinations() {
       });
       updateData(newData);
       if (fileData) setFileData(newData);
-      alert(`✅ Добавлено ${selectedRecs.length} новых признаков!`);
+      alert(`Добавлено ${selectedRecs.length} новых признаков!`);
     } catch (e) {
       setError("Ошибка сохранения: " + e.message);
     }
@@ -133,7 +133,7 @@ export default function FeatureCombinations() {
 
   return (
     <div className="card">
-      <h2>🔗 Комбинации признаков (Smart)</h2>
+      <h2>Комбинации признаков (Smart)</h2>
       <p className="muted">
         Система найдет комбинации, которые сильнее всего влияют на цель.
       </p>
@@ -149,13 +149,13 @@ export default function FeatureCombinations() {
               marginBottom: 8,
             }}
           >
-            ✅ Данные с главной: <b>{sharedData.length} строк</b>
+            Данные с главной: <b>{sharedData.length} строк</b>
           </div>
         )}
         <input type="file" accept=".csv,.xlsx,.xls" onChange={onFileChange} />
         {file && (
           <span className="ok" style={{ marginLeft: 8 }}>
-            📄 {file.name}
+            {file.name}
           </span>
         )}
       </div>
@@ -213,7 +213,7 @@ export default function FeatureCombinations() {
             onClick={onRun}
             disabled={!activeData || busy}
           >
-            {busy ? "⏳ Анализ..." : "🔍 Найти лучшие связи"}
+            {busy ? "Анализ..." : "Найти лучшие связи"}
           </button>
         </>
       )}
@@ -232,7 +232,7 @@ export default function FeatureCombinations() {
             paddingTop: 12,
           }}
         >
-          <h3>🏆 Рекомендации системы</h3>
+          <h3>Рекомендации системы</h3>
           {result.recommendations?.length > 0 ? (
             <div
               style={{
@@ -295,7 +295,7 @@ export default function FeatureCombinations() {
               cursor: "pointer",
             }}
           >
-            💾 Добавить выбранное в набор данных ({selectedRecs.length})
+            Добавить выбранное в набор данных ({selectedRecs.length})
           </button>
         </div>
       )}

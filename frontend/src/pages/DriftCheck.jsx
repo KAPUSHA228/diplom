@@ -28,7 +28,7 @@ export default function DriftCheck() {
   }, [hasData, sharedData, refData, refFile]);
 
   if (loading) {
-    return <div className="card">⏳ Загрузка данных...</div>;
+    return <div className="card">Загрузка данных...</div>;
   }
 
   async function onRefChange(e) {
@@ -72,7 +72,7 @@ export default function DriftCheck() {
 
   return (
     <div className="card">
-      <h2>🔄 Проверка дрейфа данных</h2>
+      <h2>Проверка дрейфа данных</h2>
 
       <div style={{ marginBottom: 12 }}>
         {hasShared && !refFile && (
@@ -85,7 +85,7 @@ export default function DriftCheck() {
               marginBottom: 8,
             }}
           >
-            ✅ Эталон: данные с главной (<b>{sharedData.length} строк</b>).
+            Эталон: данные с главной (<b>{sharedData.length} строк</b>).
             Загрузите новые данные для сравнения.
           </div>
         )}
@@ -148,7 +148,7 @@ export default function DriftCheck() {
 
       {/* История метрик */}
       <div style={{ marginTop: 24 }}>
-        <h3>📈 История метрик моделей</h3>
+        <h3>История метрик моделей</h3>
         {metrics.length > 0 ? (
           <Plot
             data={[

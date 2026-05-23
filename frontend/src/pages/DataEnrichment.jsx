@@ -1,11 +1,11 @@
 import { useState } from "react";
 
 const STRATEGIES = [
-  { value: "auto", label: "🤖 Авто (умный выбор)" },
-  { value: "median", label: "📊 Медиана" },
-  { value: "mean", label: "🔢 Среднее" },
-  { value: "interpolate", label: "↕️ Интерполяция" },
-  { value: "drop_rows", label: "🗑️ Удалить строки" },
+  { value: "auto", label: "Авто (умный выбор)" },
+  { value: "median", label: "Медиана" },
+  { value: "mean", label: "Среднее" },
+  { value: "interpolate", label: "Интерполяция" },
+  { value: "drop_rows", label: "Удалить строки" },
 ];
 
 export default function DataEnrichment({
@@ -28,7 +28,7 @@ export default function DataEnrichment({
   };
   return (
     <div className="card data-enrichment">
-      <h2>🧪 Обогащение данных</h2>
+      <h2>Обогащение данных</h2>
       <p className="muted">
         Категория листа: <b>{groupLabel || detectedGroup}</b>
       </p>
@@ -76,10 +76,10 @@ export default function DataEnrichment({
           onClick={handleConfirm}
           disabled={isLoading}
         >
-          {isLoading ? "⏳ Обработка..." : "✅ Применить обогащение"}
+          {isLoading ? "Обработка..." : "Применить обогащение"}
         </button>
         <button onClick={handleSkip} disabled={isLoading}>
-          {isLoading ? "⏳..." : "⏭️ Пропустить"}
+          {isLoading ? "..." : "Пропустить"}
         </button>
       </div>
 

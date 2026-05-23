@@ -40,7 +40,7 @@ export default function CompositeScore() {
     }
   }, [hasData, fileData, numericCols, weights]);
   if (loading) {
-    return <div className="card">⏳ Загрузка данных...</div>;
+    return <div className="card"> Загрузка данных...</div>;
   }
   async function onFileChange(e) {
     const f = e.target.files?.[0];
@@ -106,7 +106,7 @@ export default function CompositeScore() {
         setFileData(newData);
       }
 
-      alert(`✅ Признак "${result.score_name}" добавлен в общий набор данных!`);
+      alert(` Признак "${result.score_name}" добавлен в общий набор данных!`);
     } catch (e) {
       setError("Ошибка сохранения: " + e.message);
     }
@@ -114,7 +114,7 @@ export default function CompositeScore() {
 
   return (
     <div className="card">
-      <h2>🎯 Конструктор композитных оценок</h2>
+      <h2> Конструктор композитных оценок</h2>
       <p className="muted">
         Создайте интегральный показатель, взвешивая важные признаки.
       </p>
@@ -130,14 +130,14 @@ export default function CompositeScore() {
               marginBottom: 8,
             }}
           >
-            ✅ Данные с главной: <b>{sharedData.length} строк</b>,{" "}
+            Данные с главной: <b>{sharedData.length} строк</b>,{" "}
             {numericCols.length} числовых колонок
           </div>
         )}
         <input type="file" accept=".csv,.xlsx,.xls" onChange={onFileChange} />
         {file && (
           <span className="ok" style={{ marginLeft: 8 }}>
-            📄 {file.name}
+            {file.name}
           </span>
         )}
       </div>
@@ -210,7 +210,7 @@ export default function CompositeScore() {
             disabled={busy}
             style={{ marginTop: 12 }}
           >
-            {busy ? "⏳ Расчет..." : "🚀 Рассчитать оценку"}
+            {busy ? "Расчет..." : "Рассчитать оценку"}
           </button>
         </>
       )}
@@ -234,7 +234,7 @@ export default function CompositeScore() {
               marginBottom: 16,
             }}
           >
-            <h3 style={{ margin: 0 }}>📊 Результаты: {result.score_name}</h3>
+            <h3 style={{ margin: 0 }}>Результаты: {result.score_name}</h3>
             <button
               onClick={onSaveToDataset}
               style={{
@@ -246,7 +246,7 @@ export default function CompositeScore() {
                 cursor: "pointer",
               }}
             >
-              💾 Добавить в набор данных
+              Добавить в набор данных
             </button>
           </div>
 

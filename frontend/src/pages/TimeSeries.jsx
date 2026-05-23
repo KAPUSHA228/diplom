@@ -74,13 +74,13 @@ export default function TimeSeries() {
   }, [safeCols, timeCol]);
 
   if (loading) {
-    return <div className="card">⏳ Загрузка данных...</div>;
+    return <div className="card">Загрузка данных...</div>;
   }
   // Показываем индикатор загрузки
   if (loading) {
     return (
       <div className="card">
-        <p>⏳ Загрузка данных...</p>
+        <p>Загрузка данных...</p>
       </div>
     );
   }
@@ -156,12 +156,12 @@ export default function TimeSeries() {
     if (avgRowsPerStudent < 2.5) {
       return (
         <div className="card">
-          <h2>📉 Временные ряды и траектории студентов</h2>
+          <h2>Временные ряды и траектории студентов</h2>
           <div
             className="warning"
             style={{ padding: 16, background: "#000000", borderRadius: 8 }}
           >
-            <h3>⚠️ Данные не подходят для анализа временных рядов</h3>
+            <h3>⚠️Данные не подходят для анализа временных рядов</h3>
             <p>
               Текущий датасет содержит{" "}
               <b>примерно {avgRowsPerStudent.toFixed(1)} записей на студента</b>
@@ -183,7 +183,7 @@ export default function TimeSeries() {
   }
   return (
     <div className="card">
-      <h2>📉 Временные ряды и траектории студентов</h2>
+      <h2>Временные ряды и траектории студентов</h2>
 
       {hasData && (
         <div className="ok" style={{ marginBottom: 16 }}>
@@ -201,19 +201,19 @@ export default function TimeSeries() {
           className={mode === "individual" ? "active" : ""}
           onClick={() => setMode("individual")}
         >
-          👤 Индивидуальная траектория
+          Индивидуальная траектория
         </button>
         <button
           className={mode === "negative" ? "active" : ""}
           onClick={() => setMode("negative")}
         >
-          ⚠️ Негативная динамика
+          Негативная динамика
         </button>
         <button
           className={mode === "forecast" ? "active" : ""}
           onClick={() => setMode("forecast")}
         >
-          🔮 Прогнозирование
+          Прогнозирование
         </button>
       </div>
 
@@ -270,7 +270,7 @@ export default function TimeSeries() {
         disabled={busy || (mode !== "negative" && !selectedStudent)}
         className="primary"
       >
-        {busy ? "⏳ Выполняется анализ..." : "Запустить анализ"}
+        {busy ? "Выполняется анализ..." : "Запустить анализ"}
       </button>
 
       {error && <p className="error">{error}</p>}

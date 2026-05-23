@@ -376,7 +376,7 @@ const AnalysisResults = memo(({ result }) => {
     <div className="analysis-results">
       {/* Метрики на тесте */}
       <section className="card">
-        <h2>📊 Метрики на тестовой выборке</h2>
+        <h2>Метрики на тестовой выборке</h2>
         <div className="metrics-grid">
           <MetricCard label="F1-score" value={test_metrics.f1} />
           <MetricCard label="ROC-AUC" value={test_metrics.roc_auc} />
@@ -388,7 +388,7 @@ const AnalysisResults = memo(({ result }) => {
       {/* Кросс-валидация */}
       {cv_results && Object.keys(cv_results).length > 0 && (
         <section className="card">
-          <h2>📋 Кросс-валидация</h2>
+          <h2>Кросс-валидация</h2>
           <table className="matrix">
             <thead>
               <tr>
@@ -415,7 +415,7 @@ const AnalysisResults = memo(({ result }) => {
       {/* Отобранные признаки */}
       {selected_features.length > 0 && (
         <section className="card">
-          <h2>🔍 Отобранные признаки ({selected_features.length})</h2>
+          <h2>Отобранные признаки ({selected_features.length})</h2>
           <div className="tags">
             {selected_features.map((f) => (
               <span key={f} className="tag">
@@ -444,7 +444,7 @@ const AnalysisResults = memo(({ result }) => {
         </section>
 
         <section className="card">
-          <h2>🔗 Корреляционная матрица</h2>
+          <h2>Корреляционная матрица</h2>
           <PlotChart data={fig_corr} title="Correlation Heatmap" />
         </section>
 
@@ -457,7 +457,7 @@ const AnalysisResults = memo(({ result }) => {
       {/* Кластеры */}
       {cluster_profiles && Object.keys(cluster_profiles).length > 0 && (
         <section className="card">
-          <h2>🎯 Профили кластеров</h2>
+          <h2>Профили кластеров</h2>
           <ClusterTable profiles={cluster_profiles} />
         </section>
       )}
@@ -466,7 +466,7 @@ const AnalysisResults = memo(({ result }) => {
       {explanations && explanations.length > 0 && (
         <section className="card">
           <h2>
-            💡 SHAP объяснения (топ студентов: {result.target_col || "Target"})
+            SHAP объяснения (топ студентов: {result.target_col || "Target"})
           </h2>
           {explanations.slice(0, 5).map((exp, i) => (
             <details key={i} className="shap-exp">
@@ -491,24 +491,24 @@ const AnalysisResults = memo(({ result }) => {
           flexWrap: "wrap",
         }}
       >
-        <h3 style={{ margin: 0, marginRight: "auto" }}>💾 Экспорт</h3>
+        <h3 style={{ margin: 0, marginRight: "auto" }}> Экспорт</h3>
         <button
           onClick={handleExportPredictions}
           disabled={!result.predictions?.length}
         >
-          📥 Предсказания (CSV)
+          Предсказания (CSV)
         </button>
         <button
           onClick={handleExportExplanations}
           disabled={!explanations.length}
         >
-          📥 SHAP Объяснения (CSV)
+          SHAP Объяснения (CSV)
         </button>
         <button
           onClick={handleExportClusters}
           disabled={!Object.keys(cluster_profiles).length}
         >
-          📥 Профили кластеров (CSV)
+          Профили кластеров (CSV)
         </button>
       </div>
     </div>

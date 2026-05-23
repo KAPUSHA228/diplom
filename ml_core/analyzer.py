@@ -14,7 +14,7 @@ import numpy as np
 import cProfile
 import pstats
 from io import StringIO
-from ml_core.logger import MLLogger as ml_log
+from ml_core.logger import MLLogger
 
 
 class ResearchAnalyzer:
@@ -251,8 +251,8 @@ class ResearchAnalyzer:
             }
 
             metrics = {"test": test_metrics, "cv_results": cv_results}
-            ml_log.log_model_metrics(model_name, metrics)
-
+            ml_logger = MLLogger()
+            ml_logger.log_model_metrics(model_name, metrics)
             # Возвращаем оригинальный набор моделей обратно
             self.trainer.models = original_models_backup
 

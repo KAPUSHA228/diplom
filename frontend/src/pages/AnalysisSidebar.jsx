@@ -32,13 +32,13 @@ export default function AnalysisSidebar({ onRun, busy, canRun = false }) {
     if (isVeryLargeDataset) {
       return {
         level: "error",
-        message: `⚠️ Ваш файл содержит ${rowCount.toLocaleString()} строк. Random Forest может обучаться 3-5 минут! Рекомендуется отключить.`,
+        message: ` Ваш файл содержит ${rowCount.toLocaleString()} строк. Random Forest может обучаться 3-5 минут! Рекомендуется отключить.`,
       };
     }
     if (isLargeDataset) {
       return {
         level: "warning",
-        message: `⚠️ Ваш файл содержит ${rowCount.toLocaleString()} строк. Random Forest может обучаться 1-2 минуты.`,
+        message: ` Ваш файл содержит ${rowCount.toLocaleString()} строк. Random Forest может обучаться 1-2 минуты.`,
       };
     }
     return null;
@@ -52,7 +52,7 @@ export default function AnalysisSidebar({ onRun, busy, canRun = false }) {
     if (isVeryLargeDataset) {
       return {
         level: "warning",
-        message: `💡 SMOTE на ${rowCount.toLocaleString()} строках может занять ~6 секунд. При необходимости можно отключить.`,
+        message: `SMOTE на ${rowCount.toLocaleString()} строках может занять ~6 секунд. При необходимости можно отключить.`,
       };
     }
     return null;
@@ -84,14 +84,14 @@ export default function AnalysisSidebar({ onRun, busy, canRun = false }) {
   if (loading) {
     return (
       <aside className="sidebar">
-        <h2>⚙️ Настройки анализа</h2>
+        <h2>Настройки анализа</h2>
         <p className="muted">⏳ Загрузка данных...</p>
       </aside>
     );
   }
   return (
     <aside className="sidebar">
-      <h2>⚙️ Настройки анализа</h2>
+      <h2> Настройки анализа</h2>
       {/* Индикатор размера данных */}
       {rowCount > 0 && (
         <div
@@ -106,7 +106,7 @@ export default function AnalysisSidebar({ onRun, busy, canRun = false }) {
             borderLeft: isLargeDataset ? "3px solid #ff6b6b" : "none",
           }}
         >
-          <span>📊 Размер данных: </span>
+          <span> Размер данных: </span>
           <strong>{rowCount.toLocaleString()}</strong>
           <span> строк</span>
           {isLargeDataset && (
@@ -302,15 +302,15 @@ export default function AnalysisSidebar({ onRun, busy, canRun = false }) {
         style={{ marginTop: 12 }}
       >
         {busy
-          ? "⏳ Анализ..."
+          ? "Анализ..."
           : !canRun
-            ? "🎯 Загрузите данные и выберите цель"
-            : "🚀 Запустить анализ"}
+            ? "Загрузите данные и выберите цель"
+            : "Запустить анализ"}
       </button>
 
       <p className="hint">
         {!canRun && !busy
-          ? "⬆️ Нужны загруженные данные и подтверждённая целевая переменная (или дождитесь окончания текущего запроса)."
+          ? "Нужны загруженные данные и подтверждённая целевая переменная (или дождитесь окончания текущего запроса)."
           : "Настройки не влияют на данные, пока не нажата кнопка «Запустить анализ»."}
       </p>
     </aside>

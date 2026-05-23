@@ -80,7 +80,7 @@ export default function Crosstab() {
   if (isLoading) {
     return (
       <div className="card">
-        <p>⏳ Загрузка данных из хранилища...</p>
+        <p>Загрузка данных из хранилища...</p>
       </div>
     );
   }
@@ -150,7 +150,7 @@ export default function Crosstab() {
   }
   // Показываем загрузку
   if (isLoading || storeLoading) {
-    return <div className="card">⏳ Загрузка данных...</div>;
+    return <div className="card"> Загрузка данных...</div>;
   }
 
   // Если нет данных
@@ -163,7 +163,7 @@ export default function Crosstab() {
   }
 
   if (isLoading) {
-    return <div className="card">⏳ Загрузка данных...</div>;
+    return <div className="card"> Загрузка данных...</div>;
   }
 
   if (!hasShared) {
@@ -175,7 +175,7 @@ export default function Crosstab() {
   }
   return (
     <div className="card">
-      <h2>📈 Кросс-таблица (χ²-тест)</h2>
+      <h2> Кросс-таблица (χ²-тест)</h2>
 
       <div style={{ marginBottom: 12 }}>
         {hasShared && !fileData && (
@@ -188,7 +188,7 @@ export default function Crosstab() {
               marginBottom: 8,
             }}
           >
-            ✅ Используются данные с главной:{" "}
+            Используются данные с главной:{" "}
             <b>{sharedData?.length ?? 0} строк</b>, {activeCols?.length ?? 0}{" "}
             колонок
           </div>
@@ -270,7 +270,7 @@ export default function Crosstab() {
                   cursor: "pointer",
                 }}
               >
-                ⬇️ Скачать CSV
+                Скачать CSV
               </button>
             </div>
 
@@ -328,7 +328,7 @@ export default function Crosstab() {
             return (
               <>
                 <div style={{ marginTop: 16 }}>
-                  <h3>Heatmap</h3>
+                  <h3>Тепловая карта (Heatmap)</h3>
                   <Plot
                     data={[
                       {
@@ -358,7 +358,7 @@ export default function Crosstab() {
                 </div>
 
                 <div style={{ marginTop: 16 }}>
-                  <h3>Stacked Bar</h3>
+                  <h3>Столбчатая диаграмма с накоплением (Stacked Bar)</h3>
                   <Plot
                     data={colNames.map((col, ci) => ({
                       name: col,
@@ -391,7 +391,7 @@ export default function Crosstab() {
       {result?.chi2_test && (
         <p style={{ marginTop: 12 }}>
           χ² тест: p-value = <b>{result.chi2_test.p_value?.toFixed(4)}</b>{" "}
-          {result.chi2_test.significant ? "✅ Значимо" : "❌ Не значимо"}
+          {result.chi2_test.significant ? " Значимо" : " Не значимо"}
         </p>
       )}
     </div>

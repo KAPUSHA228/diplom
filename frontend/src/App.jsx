@@ -144,6 +144,7 @@ function MainPage() {
     rows: [],
     rowCount: 0,
   });
+  const [isDragging, setIsDragging] = useState(false);
   const [historyRefreshTrigger, setHistoryRefreshTrigger] = useState(0);
   const [analysisStage, setAnalysisStage] = useState("");
   const [analysisProgress, setAnalysisProgress] = useState(0);
@@ -290,7 +291,6 @@ function MainPage() {
       const taskId = res.task_id;
       setAnalysisTaskId(taskId);
 
-      // 🔥 СОХРАНЯЕМ taskId в sessionStorage
       sessionStorage.setItem("active_analysis_task_id", taskId);
       sessionStorage.setItem("active_analysis_target", targetColumn);
       sessionStorage.setItem(
@@ -336,7 +336,7 @@ function MainPage() {
             alignItems: "center",
           }}
         >
-          <h3 style={{ margin: 0 }}>📊 Статус анализа</h3>
+          <h3 style={{ margin: 0 }}>Статус анализа</h3>
           <button
             onClick={handleCancel}
             style={{
@@ -348,7 +348,7 @@ function MainPage() {
               cursor: "pointer",
             }}
           >
-            ❌ Отменить
+            Отменить
           </button>
         </div>
 
@@ -388,7 +388,7 @@ function MainPage() {
             analysisProgress < 100 &&
             analysisStatus !== "FAILURE" && (
               <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                ⏳ Пожалуйста, подождите...
+                Пожалуйста, подождите...
               </div>
             )}
         </div>
@@ -396,7 +396,7 @@ function MainPage() {
         {/* Ошибка если есть */}
         {analysisStatus === "FAILURE" && (
           <div style={{ marginTop: 8, color: "#e74c3c", fontSize: 13 }}>
-            ❌ {analysisStage || "Ошибка выполнения"}
+            {analysisStage || "Ошибка выполнения"}
           </div>
         )}
       </div>
@@ -526,7 +526,7 @@ function MainPage() {
       const savedTarget = sessionStorage.getItem("active_analysis_target");
       console.log("🔵 RESTORE EFFECT: savedTaskId =", savedTaskId);
       if (savedTaskId && !analysisTaskId && !analysisResult) {
-        console.log("🔄 Восстановление задачи:", savedTaskId);
+        console.log("Восстановление задачи:", savedTaskId);
         setAnalysisTaskId(savedTaskId);
         setBusy(true);
         if (savedTarget) {
@@ -673,7 +673,7 @@ function MainPage() {
         n_iter_tuning: analysisResult.config?.n_iter_tuning || 20,
         timestamp: new Date().toISOString(),
       };
-      console.log("🔍 Сохраняемый конфиг:", fullConfig);
+      console.log(" Сохраняемый конфиг:", fullConfig);
       await saveExperiment(
         saveName,
         fullMetrics,
@@ -681,18 +681,18 @@ function MainPage() {
         saveDesc,
         fullConfig,
       );
-      console.log("🔍 analysisResult.config:", analysisResult.config);
-      console.log("🔍 analysisResult full:", analysisResult);
-      console.log("🔍 analysisResult.model_name:", analysisResult.model_name);
+      console.log(" analysisResult.config:", analysisResult.config);
+      console.log("  analysisResult full:", analysisResult);
+      console.log("  analysisResult.model_name:", analysisResult.model_name);
       console.log(
-        "🔍 analysisResult.config.model_name:",
+        "  analysisResult.config.model_name:",
         analysisResult.config?.model_name,
       );
 
       setSaveModalOpen(false);
       setSaveName("");
       setSaveDesc("");
-      alert("✅ Эксперимент сохранён!");
+      alert("  Эксперимент сохранён!");
     } catch (e) {
       setError("Ошибка сохранения: " + e.message);
     } finally {
@@ -703,26 +703,26 @@ function MainPage() {
   /** Вспомогательная функция для обновления превью и данных */
   function setDataAndPreview(data) {
     if (!data || !data.length) {
-      console.log("🔍 setDataAndPreview: нет данных, выход");
+      console.log("  setDataAndPreview: нет данных, выход");
       return;
     }
-    console.log("🔍 setDataAndPreview: начало, data.length =", data.length);
+    console.log("  setDataAndPreview: начало, data.length =", data.length);
 
     let filtered = filterServiceCols(data, EXCLUDE_COLS);
 
     console.log(
-      "🔍 setDataAndPreview: после filterServiceCols, filtered.length =",
+      "  setDataAndPreview: после filterServiceCols, filtered.length =",
       filtered.length,
     );
     console.log(
-      "🔍 setDataAndPreview: колонки filtered:",
+      "  setDataAndPreview: колонки filtered:",
       Object.keys(filtered[0] || {}),
     );
 
     csvDataRef.current = filtered;
     setCsvData(filtered.slice(0, 100));
     console.log(
-      "🔍 setDataAndPreview: csvData установлен, длина =",
+      "  setDataAndPreview: csvData установлен, длина =",
       filtered.slice(0, 100).length,
     );
     shared.updateData(filtered);
@@ -736,11 +736,11 @@ function MainPage() {
         .map((r) => headers.map((h) => String(r[h] ?? "")));
       setCsvPreview({ headers, rows: previewRows, rowCount: filtered.length });
       console.log(
-        "🔍 setDataAndPreview: превью установлено, rowCount:",
+        "  setDataAndPreview: превью установлено, rowCount:",
         filtered.length,
       );
       console.log(
-        "🔍 setDataAndPreview: превью установлено, headers =",
+        "  setDataAndPreview: превью установлено, headers =",
         headers,
       );
     } else {
@@ -756,9 +756,9 @@ function MainPage() {
       csvDataRef.current?.length,
     );
     setHistoryRefreshTrigger((prev) => prev + 1);
-    console.log("🔍 setDataAndPreview: csvData установлен?", !!csvData);
+    console.log("  setDataAndPreview: csvData установлен?", !!csvData);
     console.log(
-      "🔍 setDataAndPreview: rawExcelData должен быть null, но сейчас:",
+      "  setDataAndPreview: rawExcelData должен быть null, но сейчас:",
       rawExcelData,
     );
   }
@@ -794,23 +794,23 @@ function MainPage() {
     try {
       const res = await handleImputation(rawExcelData, strategy, threshold);
       console.log(
-        "🔍 handleEnrichmentConfirm: данные получены",
+        "  handleEnrichmentConfirm: данные получены",
         res.data?.length,
       );
-      console.log("🔍 КОЛОНКИ В ОТВЕТЕ:", Object.keys(res.data[0] || {}));
+      console.log("  КОЛОНКИ В ОТВЕТЕ:", Object.keys(res.data[0] || {}));
       console.log(
-        "🔍 res.data тип:",
+        "  res.data тип:",
         Array.isArray(res.data) ? "массив" : typeof res.data,
       );
-      console.log("🔍 res.data первые 2 элемента:", res.data?.slice(0, 2));
+      console.log("  res.data первые 2 элемента:", res.data?.slice(0, 2));
       setDataAndPreview(res.data);
-      console.log("🔍 Сброс состояний...");
+      console.log("  Сброс состояний...");
       setRawExcelData(null);
       setSheetPreview(null);
       setSheetTypeInfo(null);
       setTargetSelected(false);
       console.log(
-        "🔍 После сброса: rawExcelData=null, sheetPreview=null, sheetTypeInfo=null",
+        "  После сброса: rawExcelData=null, sheetPreview=null, sheetTypeInfo=null",
       );
     } catch (e) {
       setError("Ошибка обогащения: " + e.message);
@@ -823,27 +823,27 @@ function MainPage() {
   function onEnrichmentSkip() {
     if (!rawExcelData) return;
     console.log(
-      "🔍 handleEnrichmentSkip: пропускаем обогащение",
+      "  handleEnrichmentSkip: пропускаем обогащение",
       rawExcelData.length,
     );
     console.log(
-      "🔍 res.data тип:",
+      "  res.data тип:",
       Array.isArray(rawExcelData.data) ? "массив" : typeof rawExcelData.data,
     );
     console.log(
-      "🔍 res.data первые 2 элемента:",
+      "  res.data первые 2 элемента:",
       rawExcelData.data?.slice(0, 2),
     );
     setDataAndPreview(rawExcelData);
 
-    console.log("🔍 Сброс состояний...");
+    console.log("  Сброс состояний...");
     setRawExcelData(null);
     setSheetPreview(null);
     setSheetTypeInfo(null);
     setTargetSelected(false);
 
     console.log(
-      "🔍 После сброса: rawExcelData=null, sheetPreview=null, sheetTypeInfo=null",
+      "  После сброса: rawExcelData=null, sheetPreview=null, sheetTypeInfo=null",
     );
   }
 
@@ -901,7 +901,41 @@ function MainPage() {
     setCsvPreview({ headers: [], rows: [], rowCount: 0, riskPct: null });
     loadSheetPreview(file, name);
   }
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
 
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (
+      file &&
+      (file.name.endsWith(".csv") ||
+        file.name.endsWith(".xlsx") ||
+        file.name.endsWith(".xls"))
+    ) {
+      // Создаём синтетическое событие для onFileChange
+      const syntheticEvent = { target: { files: [file] } };
+      onFileChange(syntheticEvent);
+    } else {
+      setError("Пожалуйста, загрузите файл CSV или Excel");
+    }
+  };
   /** Обрабатывает загрузку CSV или Excel */
   async function onFileChange(e) {
     const next = e.target.files?.[0] || null;
@@ -953,7 +987,7 @@ function MainPage() {
           riskPct: null,
         });
         setSheetTypeInfo({
-          group_label: "📊 Данные",
+          group_label: "  Данные",
           detected_group: "numeric",
         });
       } else {
@@ -969,7 +1003,7 @@ function MainPage() {
           riskPct: null,
         });
         setSheetTypeInfo({
-          group_label: "📊 Данные (обработано)",
+          group_label: "  Данные (обработано)",
           detected_group: "numeric",
         });
       }
@@ -1071,7 +1105,37 @@ function MainPage() {
       <div className="analysis-main">
         <div className="card">
           <h2>1) Загрузка данных</h2>
-          <input type="file" accept=".csv,.xlsx,.xls" onChange={onFileChange} />
+          <div
+            className="drag-drop-area"
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+            style={{
+              border: `2px dashed ${isDragging ? "var(--primary)" : "var(--border)"}`,
+              borderRadius: 8,
+              padding: "20px",
+              textAlign: "center",
+              cursor: "pointer",
+              backgroundColor: isDragging
+                ? "var(--bg-secondary)"
+                : "transparent",
+              transition: "all 0.2s ease",
+            }}
+            onClick={() => document.getElementById("fileInput").click()}
+          >
+            <input
+              id="fileInput"
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              onChange={onFileChange}
+              style={{ display: "none" }}
+            />
+            <div> Нажмите или перетащите файл сюда</div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+              Поддерживаются .csv, .xlsx, .xls
+            </div>
+          </div>
           <p>Файл: {file?.name || "не выбран"}</p>
           {mappingConfig && (
             <p className="muted" style={{ marginTop: 4 }}>
@@ -1125,7 +1189,7 @@ function MainPage() {
           )}
           {/* ------------------------------- */}
 
-          {busy && <p>⏳ Загрузка и анализ файла...</p>}
+          {busy && <p> Загрузка и анализ файла...</p>}
 
           {/* --- ИНТЕГРАЦИЯ SHEET MAPPER --- */}
           {sheetPreview && !rawExcelData && (
@@ -1221,7 +1285,7 @@ function MainPage() {
           !sheetPreview &&
           !rawExcelData && (
             <div className="card">
-              <h2>🎯 Выбор целевой переменной</h2>
+              <h2>Выбор целевой переменной</h2>
               <p>
                 Всего записей: <b>{csvData.length}</b> | Колонки:{" "}
                 <b>{targetCandidates.length}</b>
@@ -1265,8 +1329,8 @@ function MainPage() {
                   </p>
                   {targetStats.needsBinarize && (
                     <p className="muted" style={{ color: "var(--primary)" }}>
-                      ℹ️ Колонка содержит более 2 значений — будет преобразована
-                      в бинарную (порог = медиана)
+                      Колонка содержит более 2 значений — будет преобразована в
+                      бинарную (порог = медиана)
                     </p>
                   )}
                 </div>
@@ -1278,7 +1342,7 @@ function MainPage() {
                   disabled={!targetColumn}
                   onClick={() => setTargetSelected(true)}
                 >
-                  ✅ Подтвердить выбор цели
+                  Подтвердить выбор цели
                 </button>
                 <button
                   onClick={() => {
@@ -1303,7 +1367,7 @@ function MainPage() {
                     shared.clearData();
                   }}
                 >
-                  🔄 Сбросить данные
+                  Сбросить данные
                 </button>
               </div>
             </div>
@@ -1320,13 +1384,13 @@ function MainPage() {
                 className="primary"
                 onClick={() => setSaveModalOpen(true)}
               >
-                💾 Сохранить как эксперимент…
+                Сохранить как эксперимент…
               </button>
               <button
                 onClick={handleClearCache}
                 style={{ background: "#e74c3c", color: "white" }}
               >
-                🗑️ Очистить кеш данных
+                Очистить кеш данных
               </button>
             </div>
           </>
@@ -1347,7 +1411,7 @@ function MainPage() {
               aria-labelledby="save-experiment-title"
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 id="save-experiment-title">💾 Сохранить анализ</h3>
+              <h3 id="save-experiment-title"> Сохранить анализ</h3>
               <p className="muted" style={{ marginTop: 0 }}>
                 Имя и описание попадут в каталог экспериментов (вкладка
                 «Эксперименты»).
@@ -1405,7 +1469,7 @@ function MainPage() {
                   onClick={handleSaveExperiment}
                   disabled={!saveName.trim() || saving}
                 >
-                  {saving ? "⏳…" : "Сохранить"}
+                  {saving ? "…" : "Сохранить"}
                 </button>
               </div>
             </div>
@@ -1421,7 +1485,7 @@ function MainPage() {
                 Асинхронный анализ корреляций (работает на любом объёме данных)
               </p>
               <button onClick={onCorrelation} disabled={!file || corrLoading}>
-                {corrLoading ? "⏳ Загрузка..." : "Запустить корреляцию"}
+                {corrLoading ? " Загрузка..." : "Запустить корреляцию"}
               </button>
 
               {corrResult && (
@@ -1446,7 +1510,7 @@ function MainPage() {
 
               {corrTaskId && !corrResult && (
                 <p className="muted" style={{ marginTop: 8 }}>
-                  ⏳ Вычисление корреляции в фоне...
+                  Вычисление корреляции в фоне...
                 </p>
               )}
             </div>
@@ -1461,7 +1525,7 @@ function MainPage() {
               </button>
               {analysisTaskId && (
                 <div className="card" style={{ marginTop: 12 }}>
-                  <h3>📊 Статус анализа</h3>
+                  <h3> Статус анализа</h3>
                   <div className="progress-bar">
                     <div
                       className="progress-fill"
@@ -1481,13 +1545,8 @@ function MainPage() {
                     )}
                   </p>
                   {analysisStatus === "SUCCESS" && !analysisResult && (
-                    <p className="ok">
-                      ✅ Завершено! Загружаются результаты...
-                    </p>
+                    <p className="ok">Завершено! Загружаются результаты...</p>
                   )}
-                  {/*                                     {analysisTaskError && ( */}
-                  {/*                                       <p className="error">{analysisTaskError}</p> */}
-                  {/*                                     )} */}
                 </div>
               )}
             </div>

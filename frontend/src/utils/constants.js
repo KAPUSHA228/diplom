@@ -23,13 +23,13 @@ export const EXCLUDE_COLS = new Set([
 
 // Навигационные ссылки для вкладок
 export const NAV = [
-  { path: "/", label: "📊 Главное" },
-  { path: "/imputation", label: "🔧 Пропуски" },
-  { path: "/crosstab", label: "📈 Кросс-таблицы" },
-  { path: "/timeseries", label: "📉 Временные ряды" },
-  { path: "/composite", label: "🎯 Композитные оценки" },
-  { path: "/combinations", label: "🔗 Комбинации" },
-  { path: "/drift", label: "🔄 Дрейф" },
-  { path: "/experiments", label: "📁 Эксперименты" },
-  { path: "/subset", label: "📋 Подмножество" },
+  { path: "/", label: "Главное" },
+  { path: "/timeseries", label: "Временные ряды" },
+  { path: "/drift", label: "Дрейф" },
+  { path: "/combinations", label: "Комбинации" },
+  { path: "/composite", label: "Композитные оценки" },
+  { path: "/crosstab", label: "Кросс-таблицы" },
+  { path: "/subset", label: "Подмножество" },
+  { path: "/imputation", label: "Пропуски" },
+  { path: "/experiments", label: "Эксперименты" },
 ];

@@ -28,9 +28,9 @@ async function parseFileFull(file) {
 }
 
 const MODES = [
-  { value: "random", label: "🎲 Случайная выборка" },
-  { value: "query", label: "🔍 По условию" },
-  { value: "cluster", label: "🏷️ По кластеру" },
+  { value: "random", label: "Случайная выборка" },
+  { value: "query", label: "По условию" },
+  { value: "cluster", label: "По кластеру" },
 ];
 
 export default function SubsetSelect() {
@@ -72,7 +72,7 @@ export default function SubsetSelect() {
   }, [hasData, fileData, sharedData]);
 
   if (loading) {
-    return <div className="card">⏳ Загрузка данных...</div>;
+    return <div className="card">Загрузка данных...</div>;
   }
 
   async function onFileChange(e) {
@@ -125,7 +125,7 @@ export default function SubsetSelect() {
 
   return (
     <div className="card">
-      <h2>📋 Выделение подмножества</h2>
+      <h2>Выделение подмножества</h2>
 
       <div style={{ marginBottom: 12 }}>
         {hasShared && !fileData && (
@@ -138,13 +138,13 @@ export default function SubsetSelect() {
               marginBottom: 8,
             }}
           >
-            ✅ Данные с главной: <b>{sharedData.length} строк</b>
+            Данные с главной: <b>{sharedData.length} строк</b>
           </div>
         )}
         <input type="file" accept=".csv,.xlsx,.xls" onChange={onFileChange} />
         {file && (
           <span className="ok" style={{ marginLeft: 8 }}>
-            📄 {file.name}
+            {file.name}
           </span>
         )}
       </div>
@@ -223,7 +223,7 @@ export default function SubsetSelect() {
                 cursor: "pointer",
               }}
             >
-              🎲 Рандом
+              Рандом
             </button>
           </div>
         </div>
@@ -293,7 +293,7 @@ export default function SubsetSelect() {
           (mode === "cluster" && availableClusters.length === 0)
         }
       >
-        {busy ? "⏳ ..." : "🚀 Выделить"}
+        {busy ? "..." : "Выделить"}
       </button>
       {error && (
         <p className="error" style={{ marginTop: 8 }}>
@@ -304,7 +304,7 @@ export default function SubsetSelect() {
       {result && (
         <div style={{ marginTop: 12 }}>
           <p className="ok">
-            ✅ Найдено: <b>{result.count}</b> студентов
+            Найдено: <b>{result.count}</b> студентов
           </p>
           {result.data?.length > 0 && (
             <div className="table-wrap">

@@ -39,7 +39,7 @@ export default function DatasetHistory({ onLoad, refreshTrigger }) {
   if (datasets.length === 0 && !loading) {
     return (
       <div className="card" style={{ marginTop: 12 }}>
-        <h3>📚 История загрузок</h3>
+        <h3>История загрузок</h3>
         <p className="muted">Нет сохранённых датасетов. Загрузите файл.</p>
       </div>
     );
@@ -55,14 +55,14 @@ export default function DatasetHistory({ onLoad, refreshTrigger }) {
         }}
       >
         <h3 style={{ margin: 0 }}>
-          📚 История загрузок (последние {datasets.length})
+          История загрузок (последние {datasets.length})
         </h3>
         <button
           onClick={refreshList}
           disabled={loading}
           style={{ fontSize: 12 }}
         >
-          🔄 Обновить
+          Обновить
         </button>
       </div>
 
@@ -107,15 +107,13 @@ export default function DatasetHistory({ onLoad, refreshTrigger }) {
                 fontSize: 16,
               }}
               title="Удалить"
-            >
-              🗑️
-            </button>
+            ></button>
           </div>
         ))}
       </div>
 
       <div style={{ marginTop: 12, fontSize: 12, color: "var(--text-muted)" }}>
-        💡 Кликните по датасету — он загрузится в систему
+        Кликните по датасету — он загрузится в систему
       </div>
     </div>
   );
