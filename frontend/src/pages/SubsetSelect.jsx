@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { selectSubset } from "../api";
 import { useDatasetLoader } from "../hooks/useDatasetLoader";
+import { useSharedData } from "../hooks/useDatasetStore";
+import { downloadJSONAsCSV } from "../utils/csvHelpers";
 
 async function parseFileFull(file) {
   const isExcel = file.name.endsWith(".xlsx") || file.name.endsWith(".xls");
@@ -41,11 +43,12 @@ export default function SubsetSelect() {
   const [nSamples, setNSamples] = useState(50);
   const [query, setQuery] = useState("");
   const [clusterId, setClusterId] = useState(0);
-  const [randomSeed, setRandomSeed] = useState(42); // По умолчанию фиксированный
+  const [randomSeed, setRandomSeed] = useState(42);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [clusterCount, setClusterCount] = useState(0);
+  const shared = useSharedData();
 
   // Читаем количество кластеров из последнего результата анализа
   useEffect(() => {
@@ -122,6 +125,13 @@ export default function SubsetSelect() {
       setBusy(false);
     }
   }
+  const handleSaveToCSV = () => {
+    if (!result?.data) return;
+    // Формируем имя файла: subset_YYYYMMDD_HHMMSS.csv
+    const now = new Date();
+    const timestamp = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, "0")}${now.getDate().toString().padStart(2, "0")}_${now.getHours().toString().padStart(2, "0")}${now.getMinutes().toString().padStart(2, "0")}${now.getSeconds().toString().padStart(2, "0")}`;
+    downloadJSONAsCSV(result.data, `subset_${timestamp}`);
+  };
 
   return (
     <div className="card">
@@ -333,6 +343,24 @@ export default function SubsetSelect() {
               )}
             </div>
           )}
+        </div>
+      )}
+      {result && result.data?.length > 0 && (
+        <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+          <button
+            className="primary"
+            onClick={() => {
+              shared.updateData(result.data);
+              alert(
+                `✅ Подмножество (${result.count} записей) стало активным датасетом`,
+              );
+            }}
+            style={{ marginRight: 8 }}
+          >
+            Сделать активным датасетом
+          </button>
+          <button onClick={handleSaveToCSV}>Сохранить как CSV</button>
+          <button onClick={() => setResult(null)}>Очистить</button>
         </div>
       )}
     </div>

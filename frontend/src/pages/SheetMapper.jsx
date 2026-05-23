@@ -280,7 +280,7 @@ export default function SheetMapper({ preview, onConfirm, onSkip }) {
         <button className="primary" onClick={handleApply}>
           Применить и загрузить данные
         </button>
-        <button onClick={onSkip}>⏭️ Пропустить (авто-обработка)</button>
+        <button onClick={onSkip}>Пропустить (авто-обработка)</button>
       </div>
 
       <style>{`

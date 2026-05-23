@@ -286,7 +286,7 @@ def full_analysis_task(
             "cluster_profiles": result.cluster_profiles,
             "explanations": result.explanations,
             "predictions": result.predictions,
-            # "data_with_clusters": result.data_with_clusters,
+            "data_with_clusters": result.data_with_clusters,
             "target_col": result.target_col,
             "config": {
                 "model_name": result.model_name,

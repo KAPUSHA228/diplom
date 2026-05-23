@@ -142,6 +142,16 @@ class DataDriftDetector:
             Dict с отчетом о дрейфе
         """
 
+        # Проверка, что все ожидаемые признаки присутствуют в текущих данных
+        expected_features = set(self.numerical_features + self.categorical_features)
+        actual_features = set(current_data.columns)
+        missing = expected_features - actual_features
+        if missing:
+            raise ValueError(
+                f"Несовпадение структуры данных: в текущем файле отсутствуют признаки: {missing}. "
+                f"Детекция дрейфа невозможна."
+            )
+
         drift_report = {
             "timestamp": datetime.now().isoformat(),
             "model_name": self.model_name,

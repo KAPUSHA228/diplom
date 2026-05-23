@@ -1003,7 +1003,7 @@ function MainPage() {
           riskPct: null,
         });
         setSheetTypeInfo({
-          group_label: "  Данные (обработано)",
+          group_label: "Числовые данные (csv)",
           detected_group: "numeric",
         });
       }

@@ -379,6 +379,7 @@ async def check_drift(request: DriftCheckRequest):
             "drift_percentage": safe_json_serializable(report["drift_percentage"]),
             "drifted_features": safe_json_serializable(report["drifted_features"]),
             "recommendations": safe_json_serializable(report["recommendations"]),
+            "feature_reports": safe_json_serializable(report.get("feature_reports", {})),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

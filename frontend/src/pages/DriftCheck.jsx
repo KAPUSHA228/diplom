@@ -145,7 +145,55 @@ export default function DriftCheck() {
           )}
         </div>
       )}
-
+      {result &&
+        result.feature_reports &&
+        Object.keys(result.feature_reports).length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <h4>Детальный отчёт по каждому признаку</h4>
+            <div className="table-wrap">
+              <table className="matrix">
+                <thead>
+                  <tr>
+                    <th>Признак</th>
+                    <th>Тип</th>
+                    <th>Статистика теста</th>
+                    <th>p‑value</th>
+                    <th>Дрейф</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(result.feature_reports).map(
+                    ([feature, report]) => (
+                      <tr key={feature}>
+                        <td>
+                          <strong>{feature}</strong>
+                        </td>
+                        <td>
+                          {report.type === "numerical"
+                            ? "Числовой"
+                            : "Категориальный"}
+                        </td>
+                        <td>
+                          {report.type === "numerical"
+                            ? (report.ks_statistic?.toFixed(4) ?? "—")
+                            : (report.chi2_statistic?.toFixed(4) ?? "—")}
+                        </td>
+                        <td>{report.p_value?.toFixed(4) ?? "—"}</td>
+                        <td className={report.drifted ? "error" : "ok"}>
+                          {report.drifted ? "🔴 Да" : "🟢 Нет"}
+                        </td>
+                      </tr>
+                    ),
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <p className="muted" style={{ marginTop: 8 }}>
+              * Для числовых признаков используется KS‑тест, для категориальных
+              – χ²‑тест.
+            </p>
+          </div>
+        )}
       {/* История метрик */}
       <div style={{ marginTop: 24 }}>
         <h3>История метрик моделей</h3>

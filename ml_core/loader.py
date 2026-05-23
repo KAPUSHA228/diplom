@@ -357,16 +357,16 @@ def get_sheet_preview(file_path: str, sheet_name: str) -> dict:
         cols_info.append(col_info)
 
     group_labels = {
-        "numeric": "📊 Числовые данные",
-        "single_choice": "📝 Одиночный выбор",
-        "multiple_choice": "☑️ Множественный выбор",
-        "skip": "🗑️ Свободные ответы (скип)",
+        "numeric": "Числовые данные",
+        "single_choice": "Одиночный выбор",
+        "multiple_choice": "Множественный выбор",
+        "skip": "🗑Свободные ответы (скип)",
     }
 
     return {
         "sheet_name": sheet_name,
         "detected_group": group,
-        "group_label": group_labels.get(group, "❓ Не определено"),
+        "group_label": group_labels.get(group, "Не определено"),
         "columns": cols_info,
     }
 

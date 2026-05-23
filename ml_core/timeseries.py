@@ -68,7 +68,7 @@ class TimeSeriesAnalyzer:
                 x=student_df[time_col],
                 y=trend_line,
                 mode="lines",
-                name=f"Тренд (slope={trend:.3f}, R²={r2:.3f})",
+                name=f"Тренд (β₁={trend:.3f}, R²={r2:.3f})",
                 line=dict(dash="dash", color="red"),
             )
         )
