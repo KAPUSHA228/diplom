@@ -1263,7 +1263,6 @@ function MainPage() {
               riskPct: null,
             });
             setRefreshFlag((prev) => prev + 1);
-
             useDatasetStore.getState().setCurrentDatasetId(datasetId);
             setTargetSelected(false);
             setTargetColumn("");

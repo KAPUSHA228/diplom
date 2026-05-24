@@ -57,7 +57,7 @@ export default function DataEnrichment({
         </label>
 
         <label>
-          <b>Порог выбросов (IQR):</b> {threshold}
+          <b>Порог удаления столбцов:</b> {threshold}
           <input
             type="range"
             min="10"

@@ -107,7 +107,9 @@ export default function DatasetHistory({ onLoad, refreshTrigger }) {
                 fontSize: 16,
               }}
               title="Удалить"
-            ></button>
+            >
+              🗑️
+            </button>
           </div>
         ))}
       </div>
