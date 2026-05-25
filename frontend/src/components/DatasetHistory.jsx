@@ -22,9 +22,13 @@ export default function DatasetHistory({ onLoad, refreshTrigger }) {
   }, [refreshTrigger]);
 
   const handleLoad = async (id) => {
+    if (!id) {
+      console.error("handleLoad: id is undefined");
+      return;
+    }
     const data = await loadDatasetById(id);
     if (data && onLoad) {
-      onLoad(data);
+      onLoad(data, id);
     }
   };
 

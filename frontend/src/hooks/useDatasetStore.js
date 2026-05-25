@@ -6,7 +6,6 @@ import { useEffect, useRef, useState, useCallback } from "react";
 const db = new Dexie("ARM_Datasets");
 db.version(1).stores({
   datasets: "id, timestamp, rowCount",
-  experiments: "++id, name, timestamp",
   analysisResults: "id, timestamp",
 });
 const MAX_DATASETS = 5;
@@ -223,7 +222,15 @@ export const useDatasetStore = create(
           set({ hydrated: true, isHydrating: false });
         }
       },
-
+      activateDataset: async (id) => {
+        const record = await db.datasets.get(id);
+        if (!record) return false;
+        set({
+          currentDatasetId: id,
+          metadata: record.metadata,
+        });
+        return true;
+      },
       clearData: () => {
         set({
           currentDatasetId: null,

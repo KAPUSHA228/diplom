@@ -160,7 +160,10 @@ function MainPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [analysisTaskId, setAnalysisTaskId] = useState(null);
-
+  const [activeDatasetInfo, setActiveDatasetInfo] = useState({
+    source: "none",
+    name: "",
+  });
   const [analysisStatus, setAnalysisStatus] = useState(null);
   const [analysisLoading] = useState(false);
 
@@ -755,6 +758,7 @@ function MainPage() {
       "[setDataAndPreview] csvDataRef.current length:",
       csvDataRef.current?.length,
     );
+    setActiveDatasetInfo({ source: "file", name: file.name });
     setHistoryRefreshTrigger((prev) => prev + 1);
     console.log("  setDataAndPreview: csvData установлен?", !!csvData);
     console.log(
@@ -1136,7 +1140,19 @@ function MainPage() {
               Поддерживаются .csv, .xlsx, .xls
             </div>
           </div>
-          <p>Файл: {file?.name || "не выбран"}</p>
+          <p>
+            Активный датасет:{" "}
+            {activeDatasetInfo.source === "none" ? (
+              <span className="muted">не выбран</span>
+            ) : (
+              <span className="ok">
+                {activeDatasetInfo.source === "file"
+                  ? "новый файл "
+                  : "из истории "}
+                {activeDatasetInfo.name}
+              </span>
+            )}
+          </p>
           {mappingConfig && (
             <p className="muted" style={{ marginTop: 4 }}>
               Маппинг Excel: лист «{mappingConfig.sheet_name ?? "—"}», колонок с
@@ -1262,8 +1278,17 @@ function MainPage() {
               rowCount: data.length,
               riskPct: null,
             });
+            const store = useDatasetStore.getState();
+            const timestamp =
+              store.metadata.timestamp ||
+              store.metadata.lastUpdated ||
+              Date.now();
+            const name =
+              store.metadata.name ||
+              `Датасет от ${new Date(timestamp).toLocaleString()}`;
+            setActiveDatasetInfo({ source: "history", name });
             setRefreshFlag((prev) => prev + 1);
-            useDatasetStore.getState().setCurrentDatasetId(datasetId);
+            useDatasetStore.getState().activateDataset(datasetId);
             setTargetSelected(false);
             setTargetColumn("");
             setSheetPreview(null);
