@@ -16,9 +16,89 @@ from ml_core.features import add_composite_features, get_base_features, preproce
 from ml_core.models import ModelTrainer
 from ml_core.evaluation import generate_shap_explanations
 from ml_core.error_handler import logger
+import redis
+
+
+def get_redis_client():
+    """Получить клиент Redis с правильным адресом"""
+
+    # Определяем, запущены ли мы в Docker
+    in_docker = os.path.exists("/.dockerenv")
+
+    urls = []
+
+    # Приоритет — переменная окружения
+    if os.getenv("REDIS_URL"):
+        urls.append(os.getenv("REDIS_URL"))
+
+    if in_docker:
+        # В Docker — используем имя сервиса
+        urls.append("redis://redis:6379/0")
+    else:
+        # Локально — localhost
+        urls.append("redis://localhost:6379/0")
+        urls.append("redis://127.0.0.1:6379/0")
+
+    # Fallback на всякий случай
+    urls.append("redis://redis:6379/0")  # Docker имя
+    urls.append("redis://localhost:6379/0")  # localhost
+
+    # Убираем дубликаты
+    urls = list(dict.fromkeys(urls))
+
+    for url in urls:
+        if not url:
+            continue
+        try:
+            r = redis.Redis.from_url(url, decode_responses=False, socket_connect_timeout=2)
+            r.ping()
+            print(f"✅ Connected to Redis at {url}")
+            return r
+        except Exception as e:
+            print(f"Failed to connect to {url}: {e}")
+
+    print("⚠️ Redis not available, continuing without cache")
+    return None
+
+
+# Глобальный клиент
+_redis_client = None
+
+
+def get_redis():
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = get_redis_client()
+    return _redis_client
+
 
 # Глобальный флаг инициализации
 _ray_initialized = False
+
+
+def _save_result_to_redis(task_id: str, result: dict):
+    """Сохранить результат завершённой задачи в Redis"""
+    try:
+        r = get_redis()
+        if r:
+            import pickle
+
+            r.setex(f"task_result:{task_id}", 3600, pickle.dumps(result))
+            print(f"✅ Result saved to Redis for task {task_id}")
+        else:
+            print("⚠️ Redis client is None, cannot save result")
+    except Exception as e:
+        print(f"❌ Redis save result error: {e}")
+
+
+def _save_to_redis(task_id, stage, progress):
+    try:
+        r = get_redis()
+        if r:
+            r.hset(f"task_progress:{task_id}", mapping={"stage": stage, "progress": str(progress)})
+            r.expire(f"task_progress:{task_id}", 3600)
+    except Exception as e:
+        print(f"Redis error: {e}")
 
 
 def ensure_ray():
@@ -200,14 +280,26 @@ def shap_task(model_id: str, df_data: List[Dict[str, Any]], threshold: float = 0
 
 @ray.remote
 def full_analysis_task(
-    data: List[Dict[str, Any]], params: Dict[str, Any], progress_actor: ray.actor.ActorHandle = None
+    data: List[Dict[str, Any]],
+    params: Dict[str, Any],
+    progress_actor: ray.actor.ActorHandle = None,
+    task_id: str = None,
 ) -> Dict[str, Any]:
     """Полный анализ через Ray"""
     ensure_ray()
+    if not task_id:
+        try:
+            task_id = str(ray.get_runtime_context().get_task_id())
+        except Exception as e:
+            print(f"⚠️ Failed to get task_id: {e}")
+            task_id = None
+    print(f"🔵 Task ID: {task_id}")
 
     def report_progress(stage, progress):
         if progress_actor:
             progress_actor.update.remote(stage, progress)
+        if task_id:
+            _save_to_redis(task_id, stage, progress)
         print(f"📊 {stage}: {progress}%")
 
     try:
@@ -330,6 +422,11 @@ def full_analysis_task(
         start_serialize = time.time()
 
         serialized_result = safe_json_serializable(result_dict)
+        if task_id:
+            print(f"🔵 Saving result to Redis for task {task_id}")
+            _save_result_to_redis(task_id, serialized_result)
+        else:
+            print("⚠️ No task_id, skipping Redis save")
         print(f"🔵 serialized_result keys: {serialized_result.keys()}")
         print(f"🔵 serialized_result has fig_cm: {'fig_cm' in serialized_result}")
         print(f"🔵 serialized_result fig_cm: {serialized_result.get('fig_cm')}")

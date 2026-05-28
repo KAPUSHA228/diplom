@@ -2,7 +2,7 @@ import time
 from typing import Optional
 import pandas as pd
 from .config import config
-from .features import add_composite_features, build_composite_score, get_base_features, preprocess_data_for_smote
+from .features import build_composite_score, get_base_features, preprocess_data_for_smote
 from .analysis import correlation_analysis, cluster_students, analyze_cluster_profiles, plot_corr_heatmap
 from .models import ModelTrainer
 from .evaluation import generate_shap_explanations, plot_confusion_matrix, plot_roc_curves, plot_feature_importance
@@ -79,6 +79,8 @@ class ResearchAnalyzer:
             logger.info(f"[PROGRESS] {stage}: {progress}%")
             time.sleep(0.05)
 
+        timings = {}
+
         try:
             df = df.copy()
 
@@ -102,8 +104,8 @@ class ResearchAnalyzer:
             if "essay_text" in df.columns:
                 df = extract_text_features(df, "essay_text")
 
-            report("Создание композитных признаков", 10)
-            df = safe_execute(add_composite_features, df)
+            # report("Создание композитных признаков", 10)
+            # df = safe_execute(add_composite_features, df)
 
             report("Определение признаков", 15)
             all_features = get_base_features(df, is_synthetic=is_synthetic)
@@ -137,7 +139,7 @@ class ResearchAnalyzer:
 
                 logger.info(f"Отобрано {len(all_features)} признаков из {len(temp_features)}")
                 report(f"Отобрано признаков: {len(all_features)}", 19)
-
+            t0 = time.perf_counter()
             report("Корреляционный анализ", 20)
             corr_result = safe_execute(
                 correlation_analysis, df, all_features, target_col, corr_threshold=corr_threshold
@@ -157,7 +159,9 @@ class ResearchAnalyzer:
                     print(f"DEBUG corr: fig_corr type={type(fig_corr)}, success={fig_corr is not None}")
             else:
                 print("DEBUG corr: corr_result is None")
+            timings["correlation"] = time.perf_counter() - t0
 
+            t0 = time.perf_counter()
             report("Кластеризация студентов", 30)
             cluster_labels, _, _ = safe_execute(cluster_students, df, n_clusters=n_clusters, feature_cols=all_features)
             df = df.copy()
@@ -167,6 +171,7 @@ class ResearchAnalyzer:
                 all_features = [col for col in df.select_dtypes(include=[np.number]).columns if col != "student_id"]
             df["cluster"] = cluster_labels
             cluster_profiles = analyze_cluster_profiles(df, all_features)
+            timings["clustering"] = time.perf_counter() - t0
 
             # === ГЕНЕРАЦИЯ ГРАФИКА КЛАСТЕРОВ ===
             fig_clusters = None
@@ -221,6 +226,7 @@ class ResearchAnalyzer:
                 logger.info(f"Лучший F1 (CV): {best_score:.4f}")
 
                 report("Оптимизация завершена", 58)
+            t0 = time.perf_counter()
 
             report("Обучение моделей", 60)
             model, model_name, results = self.trainer.train_models_parallel(
@@ -255,6 +261,7 @@ class ResearchAnalyzer:
             ml_logger.log_model_metrics(model_name, metrics)
             # Возвращаем оригинальный набор моделей обратно
             self.trainer.models = original_models_backup
+            timings["training"] = time.perf_counter() - t0
 
             # ==========================================================
             predictions = []
@@ -273,6 +280,8 @@ class ResearchAnalyzer:
 
             # SHAP
             report("SHAP объяснения", 80)
+            t0 = time.perf_counter()
+
             explanations = safe_execute(
                 generate_shap_explanations,
                 model,
@@ -283,6 +292,7 @@ class ResearchAnalyzer:
                 top_n=shap_top_n,
                 n_students=5,
             )
+            timings["shap"] = time.perf_counter() - t0
 
             self.last_df = df
             self.last_metrics = metrics
@@ -292,6 +302,7 @@ class ResearchAnalyzer:
             self.last_X_test = X_test
             self.last_y_test = y_test
             self.last_y_pred = model.predict(X_test)
+            t0 = time.perf_counter()
 
             # === ГЕНЕРАЦИЯ ГРАФИКОВ (с отладкой) ===
             try:
@@ -359,9 +370,14 @@ class ResearchAnalyzer:
                 df_with_clusters["cluster"] = cluster_labels
 
             self.last_df = df_with_clusters
+            timings["generation_graphics_by_backend"] = time.perf_counter() - t0
             report("Завершение", 100)
             print("🔍 DEBUG cv_results:", metrics.get("cv_results", {}))
             print("🔍 DEBUG cv_results keys:", metrics.get("cv_results", {}).keys())
+            print("📊 Результаты замеров:")
+            for name, t in timings.items():
+                print(f"   {name}: {t:.3f} сек")
+
             # Добавляем в результат
             return AnalysisResponse(
                 metrics=metrics,

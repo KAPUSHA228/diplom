@@ -5,9 +5,16 @@ ML Service — предсказания, обучение моделей, SHAP.
 from fastapi import FastAPI, UploadFile, File
 from typing import Dict, Any
 import ray
-from ray.exceptions import RayTaskError
 from ml_core.error_handler import logger
-from workers.tasks import train_model_task, shap_task, init_ray, full_analysis_task, ProgressActor, correlation_task
+from workers.tasks import (
+    train_model_task,
+    shap_task,
+    init_ray,
+    full_analysis_task,
+    ProgressActor,
+    correlation_task,
+    get_redis,
+)
 from ml_core.models import ModelTrainer
 from contextlib import asynccontextmanager
 from fastapi import APIRouter, HTTPException
@@ -361,8 +368,10 @@ async def full_analysis_async(request: AnalysisRequest):
     try:
         print("🔵 full_analysis_async: вызываем ensure_ray()")
         from workers.tasks import ensure_ray
+        import uuid
 
         ensure_ray()
+        task_id = str(uuid.uuid4())
         print("🔵 full_analysis_async: после ensure_ray()")
         # Создаём Actor для прогресса
         progress_actor = ProgressActor.remote()
@@ -371,10 +380,7 @@ async def full_analysis_async(request: AnalysisRequest):
         print(f"  - n_iter_tuning: {request.n_iter_tuning}")
         print(f"  - target_col: {request.target_col}")
         # Запускаем задачу
-        obj_ref = full_analysis_task.remote(request.df, request.dict(), progress_actor)
-
-        # Генерируем ID (можно использовать hex из ObjectRef)
-        task_id = obj_ref.hex()
+        obj_ref = full_analysis_task.remote(request.df, request.dict(), progress_actor, task_id)
         active_tasks[task_id] = obj_ref
         active_progress[task_id] = progress_actor
 
@@ -429,47 +435,59 @@ async def get_correlation_status(task_id: str):
 @router_ml.get("/full_async/{task_id}")
 async def get_full_analysis_status(task_id: str):
     """Статус фонового анализа."""
+    # 1. Сначала проверяем Redis (завершённые задачи)
+    try:
+        import pickle
+
+        r = get_redis()
+        keys = r.keys("task_result:*")
+        print(f"🔍 Redis keys: {keys}")
+        cached = r.get(f"task_result:{task_id}")
+        if cached:
+            print(f"✅ Cache hit for task {task_id}")
+            result = pickle.loads(cached)
+            return {"task_id": task_id, "status": "SUCCESS", "result": result}
+        else:
+            print(f"⚠️ No cache for task_id: {task_id}")
+    except Exception as e:
+        print(f"Redis read error: {e}")
+
+    # 2. Проверяем активные задачи
     if task_id not in active_tasks:
         return {"task_id": task_id, "status": "UNKNOWN"}
 
     obj_ref = active_tasks[task_id]
 
-    # Проверяем готовность
-    ready_refs, _ = ray.wait([obj_ref], timeout=0)
+    # Пытаемся получить результат с таймаутом 0.001 сек
+    # Если задача завершена — сразу возвращаем SUCCESS
+    try:
+        result = ray.get(obj_ref, timeout=0.001)
+        # Если дошли сюда — задача завершена успешно
+        del active_tasks[task_id]
+        if task_id in active_progress:
+            del active_progress[task_id]
+        return {"task_id": task_id, "status": "SUCCESS", "result": result}
+    except ray.exceptions.GetTimeoutError:
+        # Задача ещё выполняется — возвращаем прогресс
+        progress = None
+        if task_id in active_progress:
+            try:
+                progress = ray.get(active_progress[task_id].get.remote())
+            except Exception:
+                pass
 
-    # Получаем прогресс из Actor
-    progress = None
-    if task_id in active_progress:
-        try:
-            progress = ray.get(active_progress[task_id].get.remote())
-        except Exception:
-            pass
-
-    if ready_refs:
-        import time
-
-        start_get = time.time()
-        try:
-            result = ray.get(obj_ref)
-            print(f"🔵 RAY.GET ЗАВЕРШЕН за {time.time() - start_get:.2f} сек")
-            print(f"🔵 РАЗМЕР РЕЗУЛЬТАТА: {len(str(result)) / 1024 / 1024:.2f} MB")
-            del active_tasks[task_id]
-            if task_id in active_progress:
-                del active_progress[task_id]
-            return {"task_id": task_id, "status": "SUCCESS", "result": result}
-        except RayTaskError as e:
-            del active_tasks[task_id]
-            if task_id in active_progress:
-                del active_progress[task_id]
-            return {"task_id": task_id, "status": "FAILURE", "error": str(e)}
-
-    # Задача ещё выполняется
-    return {
-        "task_id": task_id,
-        "status": "PROGRESS",
-        "stage": progress.get("stage", "Выполняется...") if progress else "Выполняется...",
-        "progress": progress.get("progress", 0) if progress else 0,
-    }
+        return {
+            "task_id": task_id,
+            "status": "PROGRESS",
+            "stage": progress.get("stage", "Выполняется...") if progress else "Выполняется...",
+            "progress": progress.get("progress", 0) if progress else 0,
+        }
+    except Exception as e:
+        # Ошибка при выполнении
+        del active_tasks[task_id]
+        if task_id in active_progress:
+            del active_progress[task_id]
+        return {"task_id": task_id, "status": "FAILURE", "error": str(e)}
 
 
 @router_ml.post("/full_async/{task_id}/cancel")

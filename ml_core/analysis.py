@@ -32,6 +32,12 @@ def correlation_analysis(df, feature_cols, target_col, corr_threshold=0.3, outpu
     Returns:
         dict: full_matrix, strong_matrix, threshold, target_correlations, strong_correlations
     """
+
+    print(f"🔍 correlation_analysis: target_col = {target_col}")
+    print(f"🔍 correlation_analysis: feature_cols = {feature_cols}")
+    print(f"🔍 Типы колонок:\n{df[feature_cols + [target_col]].dtypes}")
+    print(f"🔍 Первые 5 строк:\n{df[feature_cols + [target_col]].head()}")
+
     df = df.copy()
 
     # Исключаем target из feature_cols чтобы не было дублей

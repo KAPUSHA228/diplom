@@ -9,6 +9,7 @@ from api.excel_service.main import router as excel_router
 from api.analyze_service.main import router as analyze_router
 from api.ml_service.main import router_ml, router_analyze_ml
 from api.experiments_service.main import router as experiments_router
+from fastapi.middleware.gzip import GZipMiddleware
 
 app = FastAPI(
     title="ML Analytics Gateway",
@@ -23,6 +24,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 
 app.include_router(excel_router)  # /excel/preview, /excel/process, /imputation/handle
 app.include_router(analyze_router)  # /crosstab, /timeseries/*, /drift/check

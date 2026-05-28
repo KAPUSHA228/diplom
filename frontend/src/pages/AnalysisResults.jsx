@@ -338,6 +338,8 @@ const AnalysisResults = memo(({ result }) => {
   const renderStartTime = useRef(Date.now());
 
   // === ОТЛАДКА ===
+  console.log("🔍 fig_corr в AnalysisResults:", fig_corr);
+  console.log("🔍 fig_corr data:", fig_corr?.data);
   console.log("=== Данные графиков от сервера ===");
   console.log("ROC:", fig_roc);
   console.log("CM:", fig_cm);
@@ -434,7 +436,7 @@ const AnalysisResults = memo(({ result }) => {
         </section>
 
         <section className="card">
-          <h2>Confusion Matrix</h2>
+          <h2>Матрица Ошибок</h2>
           <PlotChart data={fig_cm} title="Confusion Matrix" />
         </section>
 

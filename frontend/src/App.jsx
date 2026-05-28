@@ -144,6 +144,8 @@ function MainPage() {
     rows: [],
     rowCount: 0,
   });
+  const [loadingStatus, setLoadingStatus] = useState(""); // "uploading", "enriching", "loading_history"
+  const [loadingMessage, setLoadingMessage] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [historyRefreshTrigger, setHistoryRefreshTrigger] = useState(0);
   const [analysisStage, setAnalysisStage] = useState("");
@@ -176,11 +178,16 @@ function MainPage() {
     if (!analysisTaskId) return;
 
     let isActive = true;
-    let intervalId = null;
+    let timeoutId = null;
+    let attempts = 0;
+    const getDelay = () => Math.min(3000 * Math.pow(1.3, attempts), 10000);
 
     const poll = async () => {
       if (!isActive) return;
-
+      if (analysisResult) {
+        console.log("Already have result, skipping poll");
+        return;
+      }
       try {
         const data = await getFullAnalysisStatus(analysisTaskId);
 
@@ -189,9 +196,25 @@ function MainPage() {
         setAnalysisStatus(data.status);
 
         if (data.status === "SUCCESS") {
-          await saveAnalysisResult(analysisTaskId, data.result);
+          const completedTaskId = analysisTaskId;
+          const completedResult = data.result;
+          // 1. НЕМЕДЛЕННО останавливаем polling (не ждём сохранения!)
+          setAnalysisTaskId(null);
+          setBusy(false);
+          sessionStorage.removeItem("active_analysis_task_id");
+
+          // 2. Устанавливаем результат для отображения (сразу показываем)
+          setAnalysisResult(completedResult);
+          if (completedResult?.data_with_clusters) {
+            shared.updateData(completedResult.data_with_clusters);
+          }
+
+          // 3. Сохраняем в IndexedDB в фоне (без await, не блокируем)
+          saveAnalysisResult(completedTaskId, completedResult).catch(
+            console.error,
+          );
           sessionStorage.setItem("has_unviewed_result", "true");
-          sessionStorage.setItem("unviewed_result_id", analysisTaskId);
+          sessionStorage.setItem("unviewed_result_id", completedTaskId);
           console.log("=== ПОЛНЫЙ ОТВЕТ ОТ БЭКЕНДА ===", data.result);
           console.log("=== target_col в ответе ===", data.result?.target_col);
           console.log("🔵 ВРЕМЯ ПОЛУЧЕНИЯ:", new Date().toLocaleTimeString());
@@ -206,37 +229,38 @@ function MainPage() {
           }
           setAnalysisTaskId(null);
           setBusy(false);
-          if (intervalId) clearInterval(intervalId);
           sessionStorage.removeItem("active_analysis_task_id");
           sessionStorage.removeItem("active_analysis_params");
           sessionStorage.removeItem("active_analysis_target");
+          return;
         } else if (data.status === "FAILURE") {
           setError(data.error || "Analysis failed");
           setAnalysisTaskId(null);
           setBusy(false);
-          if (intervalId) clearInterval(intervalId);
           sessionStorage.removeItem("active_analysis_task_id");
           sessionStorage.removeItem("active_analysis_params");
           sessionStorage.removeItem("active_analysis_target");
+          return;
         } else if (data.status === "PROGRESS") {
           setAnalysisStage(data.stage || "Выполняется...");
           setAnalysisProgress(data.progress || 0);
           setAnalysisStatus("PROGRESS");
+          attempts++;
+          timeoutId = setTimeout(poll, getDelay());
         }
       } catch (err) {
         console.error("Polling error:", err);
+        attempts++;
+        timeoutId = setTimeout(poll, getDelay());
       }
     };
 
     // Первый запрос сразу
     poll();
 
-    // Затем каждые 3 секунды
-    intervalId = setInterval(poll, 3000);
-
     return () => {
       isActive = false;
-      if (intervalId) clearInterval(intervalId);
+      if (timeoutId) clearInterval(timeoutId);
     };
   }, [analysisTaskId]);
 
@@ -546,37 +570,48 @@ function MainPage() {
     if (!corrTaskId) return;
 
     let isActive = true;
-    let intervalId = null;
+    let timeoutId = null;
+    let attempts = 0;
+
+    const getDelay = () => Math.min(2000 * Math.pow(1.5, attempts), 15000);
 
     const poll = async () => {
       if (!isActive) return;
+
       try {
         const data = await getCorrelationStatus(corrTaskId);
-        console.log("🔵 Correlation status:", data);
+
+        if (!isActive) return;
 
         if (data.status === "SUCCESS") {
-          console.log("🔵 Correlation result:", data.result);
           setCorrResult(data.result);
           setCorrTaskId(null);
           setCorrLoading(false);
-          if (intervalId) clearInterval(intervalId);
-        } else if (data.status === "FAILURE") {
+          return; // не продолжаем polling
+        }
+
+        if (data.status === "FAILURE") {
           setError(data.error || "Correlation failed");
           setCorrTaskId(null);
           setCorrLoading(false);
-          if (intervalId) clearInterval(intervalId);
+          return;
         }
+
+        // Если не завершено — продолжаем с увеличенной задержкой
+        attempts++;
+        timeoutId = setTimeout(poll, getDelay());
       } catch (err) {
         console.error("Polling error:", err);
+        attempts++;
+        timeoutId = setTimeout(poll, getDelay());
       }
     };
 
     poll();
-    intervalId = setInterval(poll, 2000);
 
     return () => {
       isActive = false;
-      if (intervalId) clearInterval(intervalId);
+      if (timeoutId) clearTimeout(timeoutId);
     };
   }, [corrTaskId]);
 
@@ -612,7 +647,7 @@ function MainPage() {
   );
 
   async function onCorrelation() {
-    if (!file) return;
+    if (!csvDataRef.current || !csvDataRef.current.length) return;
 
     setCorrLoading(true);
     setCorrResult(null);
@@ -793,6 +828,9 @@ function MainPage() {
   /** Обработчик подтверждения обогащения */
   async function onEnrichmentConfirm({ strategy, threshold }) {
     if (!rawExcelData) return;
+    setLoadingStatus("enriching");
+    setLoadingMessage("Обогащение данных: обработка пропусков и выбросов...");
+
     setBusy(true);
     setError("");
     try {
@@ -816,7 +854,11 @@ function MainPage() {
       console.log(
         "  После сброса: rawExcelData=null, sheetPreview=null, sheetTypeInfo=null",
       );
+      setLoadingStatus("");
+      setLoadingMessage("");
     } catch (e) {
+      setLoadingStatus("");
+      setLoadingMessage("");
       setError("Ошибка обогащения: " + e.message);
     } finally {
       setBusy(false);
@@ -957,7 +999,8 @@ function MainPage() {
     setSelectedSheet("");
     setTargetColumn("");
     setTargetSelected(false);
-
+    setLoadingStatus("uploading");
+    setLoadingMessage("Чтение и обработка файла...");
     if (!next) return;
 
     const isExcel = next.name.endsWith(".xlsx") || next.name.endsWith(".xls");
@@ -973,6 +1016,9 @@ function MainPage() {
 
         const sheetNames = wb.SheetNames;
         if (sheetNames.length > 1) {
+          setLoadingStatus("");
+          setLoadingMessage("");
+
           setExcelSheets(sheetNames);
           setCsvPreview({ headers: [], rows: [], rowCount: 0 });
           return;
@@ -1011,8 +1057,12 @@ function MainPage() {
           detected_group: "numeric",
         });
       }
+      setLoadingStatus("");
+      setLoadingMessage("");
     } catch (err) {
       console.error(err);
+      setLoadingStatus("");
+      setLoadingMessage("");
       setError("Ошибка чтения файла: " + err.message);
       setBusy(false);
     }
@@ -1205,8 +1255,12 @@ function MainPage() {
           )}
           {/* ------------------------------- */}
 
-          {busy && <p> Загрузка и анализ файла...</p>}
-
+          {loadingStatus && (
+            <div className="loading-indicator">
+              <div className="spinner"></div>
+              <p>{loadingMessage}</p>
+            </div>
+          )}
           {/* --- ИНТЕГРАЦИЯ SHEET MAPPER --- */}
           {sheetPreview && !rawExcelData && (
             <SheetMapper
@@ -1268,6 +1322,8 @@ function MainPage() {
         {/*=== выбор датасета ===*/}
         <DatasetHistory
           onLoad={(data, datasetId) => {
+            setLoadingStatus("loading_history");
+            setLoadingMessage("📚 Загрузка датасета из истории...");
             csvDataRef.current = data;
             setCsvData(data.slice(0, 100));
             setCsvPreview({
@@ -1298,6 +1354,8 @@ function MainPage() {
             setAnalysisResult(null);
             setCorrResult(null);
             setHistoryRefreshTrigger((prev) => prev + 1);
+            setLoadingStatus("");
+            setLoadingMessage("");
           }}
           refreshTrigger={historyRefreshTrigger}
         />
@@ -1508,7 +1566,15 @@ function MainPage() {
               <p className="muted">
                 Асинхронный анализ корреляций (работает на любом объёме данных)
               </p>
-              <button onClick={onCorrelation} disabled={!file || corrLoading}>
+              <button
+                onClick={onCorrelation}
+                disabled={
+                  !csvDataRef.current ||
+                  !csvDataRef.current.length ||
+                  busy ||
+                  corrLoading
+                }
+              >
                 {corrLoading ? " Загрузка..." : "Запустить корреляцию"}
               </button>
 
@@ -1540,7 +1606,7 @@ function MainPage() {
             </div>
 
             <div className="card">
-              <h2>3) Асинхронные ML-задачи (Celery)</h2>
+              <h2>3) Асинхронные ML-задачи</h2>
               <p className="muted">
                 Обучение в фоне (требует Celery worker). Не блокирует интерфейс.
               </p>
