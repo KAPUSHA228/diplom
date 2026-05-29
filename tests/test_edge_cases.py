@@ -164,8 +164,11 @@ class TestDegenerateCases:
                 "a": [1.0, 2.0, 3.0],
             }
         )
-        with pytest.raises(ValueError, match="n_samples"):
-            cluster_students(df, n_clusters=5)
+        with pytest.raises(ValueError, match="cannot be greater"):
+            cluster_students(
+                df,
+                n_clusters=5,
+            )
 
     def test_identical_rows(self):
         """Все строки одинаковые — кластеризация."""

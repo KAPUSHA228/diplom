@@ -90,6 +90,8 @@ def cluster_students(df, n_clusters=3, feature_cols=None):
         (labels, kmeans, scaler): метки кластеров, модель KMeans, скалер StandardScaler
     """
     df = df.copy()
+    if n_clusters > len(df):
+        raise ValueError(f"n_clusters ({n_clusters}) cannot be greater than n_samples ({len(df)})")
 
     if feature_cols is None:
         feature_cols = df.select_dtypes(include=[np.number]).columns.tolist()
