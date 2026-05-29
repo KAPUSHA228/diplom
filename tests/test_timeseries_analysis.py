@@ -1,41 +1,53 @@
 """Тестирование анализа временных рядов и прогнозирования."""
 
 import pandas as pd
-from ml_core.timeseries import TimeSeriesAnalyzer
+import pytest
+from ml_core.timeseries import TimeSeriesAnalyzer, forecast_student
 
 
 class TestTimeSeriesForecasting:
-    """Прогнозирование оценок студентов."""
-
-    # def test_forecast_with_empty_history(self):
-    #     """Пустая история → нулевые прогнозы."""
-    #     result = forecast_grades_chupep([], periods=3)
-    #     assert len(result) == 3
-    #     assert all(v == 0 for v in result)
+    def test_forecast_with_insufficient_history(self):
+        df = pd.DataFrame(
+            {
+                "student_id": [1, 1],
+                "semester": [1, 2],
+                "avg_grade": [3.0, 3.5],
+            }
+        )
+        result = forecast_student(df, student_id=1, value_col="avg_grade", periods=3)
+        assert "error" in result
 
     def test_detect_negative_dynamics_missing_column(self):
-        """Отсутствует колонка времени → ошибка."""
-        df = pd.DataFrame({"a": [1, 2, 3]})
-        analyzer = TimeSeriesAnalyzer(self.df, student_id_col="student_id")
+        df = pd.DataFrame(
+            {
+                "student_id": [1, 1, 1],
+                "avg_grade": [3.0, 3.5, 4.0],
+            }
+        )
+        analyzer = TimeSeriesAnalyzer(df)
+        with pytest.raises(KeyError):
+            analyzer.detect_negative_dynamics(
+                value_col="avg_grade",
+                time_col="nonexistent",
+            )
 
-        result = analyzer.detect_negative_dynamics(df, time_col="nonexistent")
-        assert "error" in result or result.get("n_students_analyzed", 0) == 0
-
-    # def test_cohort_trajectory_comparison(self):
-    #     """Сравнение траекторий когорт."""
-    #     rng = np.random.RandomState(42)
-    #     records = []
-    #     for year in [2020, 2021]:
-    #         for sem in range(1, 4):
-    #             for _ in range(5):
-    #                 records.append(
-    #                     {
-    #                         "year": year,
-    #                         "semester": sem,
-    #                         "avg_grade": 3.5 + rng.normal(0, 0.3),
-    #                     }
-    #                 )
-    #     df = pd.DataFrame(records)
-    #     result = analyze_cohort_trajectory(df, cohort_col="year", time_col="semester")
-    #     assert "cohort_data" in result
-    #     assert "figure" in result
+    def test_cohort_like_multi_student_analysis(self):
+        records = []
+        for year in [2020, 2021]:
+            for sem in range(1, 4):
+                for sid in range(3):
+                    records.append(
+                        {
+                            "student_id": f"{year}_{sid}",
+                            "semester": sem,
+                            "avg_grade": 3.5 + sem * 0.1,
+                        }
+                    )
+        df = pd.DataFrame(records)
+        analyzer = TimeSeriesAnalyzer(df)
+        result = analyzer.detect_negative_dynamics(
+            value_col="avg_grade",
+            time_col="semester",
+            min_points=2,
+        )
+        assert result["n_students_analyzed"] > 0

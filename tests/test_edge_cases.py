@@ -215,8 +215,8 @@ class TestRegressionBugs:
         assert hasattr(fig, "layout")  # Plotly figure
 
     def test_forecast_grades_dataframe_version(self):
-        """forecast_grades принимает (df, student_id, ...) и возвращает dict."""
-        from ml_core.timeseries import forecast_grades
+        """forecast_student принимает DataFrame и возвращает прогноз."""
+        from ml_core.timeseries import forecast_student
 
         records = []
         for sem in range(1, 6):
@@ -228,8 +228,8 @@ class TestRegressionBugs:
                 }
             )
         df = pd.DataFrame(records)
-        result = forecast_grades(df, student_id=0, value_col="avg_grade", future_semesters=2)
-        assert "future_semesters" in result
+        result = forecast_student(df, student_id=0, value_col="avg_grade", time_col="semester", periods=2)
+        assert "future_periods" in result
         assert "predictions" in result
         assert len(result["predictions"]) == 2
 

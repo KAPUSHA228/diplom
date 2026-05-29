@@ -40,21 +40,17 @@ class TestCrosstabValidation:
         with pytest.raises(ValueError, match="не найдена"):
             create_crosstab(df, "a", "nonexistent")
 
-    def test_raises_when_numeric_too_many_unique(self):
-        """Числовая колонка с >20 уникальными → ValueError.
-
-        Кросс-таблица предназначена для категориальных данных.
-        Числовые с большим числом уникальных нужно предварительно
-        группировать (pd.cut / pd.qcut).
-        """
+    def test_auto_bins_high_cardinality_numeric(self):
+        """Числовая колонка с >20 уникальными автоматически бинируется."""
         df = pd.DataFrame(
             {
                 "id": range(100),
                 "flag": [0, 1] * 50,
             }
         )
-        with pytest.raises(ValueError, match="числовой"):
-            create_crosstab(df, "id", "flag")
+        result = create_crosstab(df, "id", "flag")
+        assert "table" in result
+        assert result.get("auto_binned") is True
 
 
 class TestCrosstabAggregation:
@@ -110,8 +106,8 @@ class TestMultiCrosstab:
         assert "nonexistent" not in result
         assert "also_missing" not in result
 
-    def test_catches_errors_per_variable(self):
-        """Ошибка в отдельной переменной не ломает весь анализ."""
+    def test_multi_crosstab_bins_numeric_variable(self):
+        """Числовая переменная бинируется автоматически."""
         df = pd.DataFrame(
             {
                 "numeric_id": range(100),
@@ -120,7 +116,7 @@ class TestMultiCrosstab:
         )
         result = create_multi_crosstab(df, ["numeric_id"], "flag")
         assert "numeric_id" in result
-        assert "error" in result["numeric_id"]
+        assert "table" in result["numeric_id"]
 
 
 class TestSimpleCrosstab:

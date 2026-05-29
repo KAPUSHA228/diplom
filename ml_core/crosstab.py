@@ -45,6 +45,11 @@ def create_crosstab(
     dict с таблицей, статистикой и визуализацией
     """
 
+    if row_var not in df.columns:
+        raise ValueError(f"Переменная '{row_var}' не найдена в данных")
+    if col_var not in df.columns:
+        raise ValueError(f"Переменная '{col_var}' не найдена в данных")
+
     df = df.copy()
     bin_info = {}
 

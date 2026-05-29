@@ -276,8 +276,7 @@ def detect_sheet_group(sheet_name: str = None) -> str:
             print(f"Лист '{sheet_name}' определён по словарю как '{category}'")
             return category
 
-    # 2. Fallback: автоопределение по содержимому
-    # df_sample = df.head(sample_size) if len(df) > sample_size else df
+    return "unknown"
 
 
 def normalize_sheet_group(sheet_group: str | None) -> str:

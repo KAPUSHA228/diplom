@@ -34,24 +34,24 @@ class TestSavePlotlyFig:
 class TestMakeKey:
     """Тесты генерации ключей кеширования"""
 
-    def test_key_has_prefix(self):
-        key = _make_key("test_func", 1, "hello", verbose=True)
-        assert key.startswith("ml_cache:test_func:")
+    def test_key_is_md5_hex(self):
+        key = _make_key("test_func", "ds1", 1, "hello", verbose=True)
+        assert len(key) == 32
+        assert all(c in "0123456789abcdef" for c in key)
 
     def test_different_args_different_keys(self):
-        key1 = _make_key("func", 1)
-        key2 = _make_key("func", 2)
+        key1 = _make_key("func", "ds1", 1)
+        key2 = _make_key("func", "ds1", 2)
         assert key1 != key2
 
-    def test_dataframe_arg_creates_key(self):
+    def test_dataframe_arg_skipped_in_key(self):
         df = pd.DataFrame({"a": [1, 2, 3]})
-        key = _make_key("cluster", df, n_clusters=3)
-        assert key.startswith("ml_cache:cluster:")
+        key = _make_key("cluster", "ds1", df, n_clusters=3)
+        assert len(key) == 32
 
     def test_same_args_same_key(self):
-        df = pd.DataFrame({"x": [10, 20]})
-        key1 = _make_key("my_func", df, k=5)
-        key2 = _make_key("my_func", df, k=5)
+        key1 = _make_key("my_func", "dataset", k=5)
+        key2 = _make_key("my_func", "dataset", k=5)
         assert key1 == key2
 
 

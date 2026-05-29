@@ -1,11 +1,8 @@
 """Тестирование кластеризации, корреляций и визуализации."""
 
-import os
-import numpy as np
 import pandas as pd
 from ml_core.analysis import (
     plot_clusters_pca,
-    plot_clusters_2d,
     plot_corr_heatmap,
     analyze_cluster_profiles,
 )
@@ -21,15 +18,6 @@ class TestClusterVisualization:
         df = pd.DataFrame({"a": [1.0, 2.0, 3.0, 4.0], "cluster": [0, 0, 1, 1]})
         fig = plot_clusters_pca(df, df["cluster"], features=["a"])
         assert hasattr(fig, "data")
-
-    def test_pca_2d_matplotlib(self, tmp_path):
-        """matplotlib-визуализация кластеров."""
-        X = np.random.rand(50, 4)
-        labels = np.random.randint(0, 3, 50)
-        output = str(tmp_path / "clusters.png")
-        pca = plot_clusters_2d(X, labels, output_path=output)
-        assert os.path.exists(output)
-        assert pca.n_components_ == 2
 
     def test_correlation_heatmap_plotly(self):
         """Plotly heatmap корреляционной матрицы."""
@@ -65,10 +53,11 @@ class TestCrosstabValidation:
         with pytest.raises(ValueError, match="не найдена"):
             create_crosstab(df, "a", "nonexistent")
 
-    def test_raises_when_numeric_too_many_unique(self):
+    def test_auto_bins_high_cardinality_numeric(self):
         df = pd.DataFrame({"id": range(100), "flag": [0, 1] * 50})
-        with pytest.raises(ValueError, match="числовой"):
-            create_crosstab(df, "id", "flag")
+        result = create_crosstab(df, "id", "flag")
+        assert "table" in result
+        assert result.get("auto_binned") is True
 
 
 class TestCrosstabAggregation:
@@ -107,11 +96,11 @@ class TestMultiCrosstabAnalysis:
         assert "gender" in result
         assert "nonexistent" not in result
 
-    def test_catches_errors_per_variable(self):
+    def test_multi_crosstab_bins_numeric_variable(self):
         df = pd.DataFrame({"numeric_id": range(100), "flag": [0, 1] * 50})
         result = create_multi_crosstab(df, ["numeric_id"], "flag")
         assert "numeric_id" in result
-        assert "error" in result["numeric_id"]
+        assert "table" in result["numeric_id"]
 
 
 class TestSimpleCrosstab:

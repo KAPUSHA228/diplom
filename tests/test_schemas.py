@@ -1,12 +1,8 @@
 """Тесты для ml_core/schemas.py"""
+
 import pytest
-import pandas as pd
-from ml_core.schemas import (
-    AnalysisRequest,
-    CompositeScoreRequest,
-    AnalysisResult,
-    TrajectoryRequest,
-)
+from api.ml_service.schemas import AnalysisRequest, CompositeRequest, AnalysisResponse
+from api.analyze_service.schemas import TrajectoryRequest
 
 
 class TestAnalysisRequest:
@@ -23,7 +19,10 @@ class TestAnalysisRequest:
         assert req.corr_threshold == 0.3
         assert req.use_smote is True
         assert req.use_hp_tuning is False
-        assert req.use_composite_features is True
+        assert req.use_lr is True
+        assert req.use_rf is True
+        assert req.use_xgb is True
+        assert req.n_features_to_select == 7
 
     def test_custom_values(self):
         req = AnalysisRequest(
@@ -50,22 +49,20 @@ class TestCompositeScoreRequest:
     """Тесты CompositeScoreRequest."""
 
     def test_basic(self):
-        req = CompositeScoreRequest(
+        req = CompositeRequest(
             df=[{"a": 1, "b": 2}],
             feature_weights={"a": 0.6, "b": 0.4},
         )
         assert req.score_name == "custom_score"
-        assert req.normalize is True
+        assert req.feature_weights == {"a": 0.6, "b": 0.4}
 
     def test_custom_name(self):
-        req = CompositeScoreRequest(
+        req = CompositeRequest(
             df=[{"a": 1}],
             feature_weights={"a": 1.0},
             score_name="my_score",
-            normalize=False,
         )
         assert req.score_name == "my_score"
-        assert req.normalize is False
 
 
 class TestTrajectoryRequest:
@@ -84,11 +81,11 @@ class TestAnalysisResult:
     """Тесты AnalysisResult."""
 
     def test_basic(self):
-        result = AnalysisResult(status="success")
+        result = AnalysisResponse(status="success")
         assert result.status == "success"
 
     def test_error_status(self):
-        result = AnalysisResult(
+        result = AnalysisResponse(
             status="error",
             message="Something went wrong",
         )

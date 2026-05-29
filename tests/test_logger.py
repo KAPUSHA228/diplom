@@ -10,8 +10,7 @@ class TestMLLoggerInit:
 
     def test_creates_log_dir_and_files(self, tmp_path):
         log_dir = tmp_path / "logs"
-        # TODO
-        # logger = MLLogger(log_dir=str(log_dir))
+        MLLogger(log_dir=str(log_dir))
 
         assert log_dir.exists()
         assert os.path.exists(str(log_dir / "ml_events.log"))

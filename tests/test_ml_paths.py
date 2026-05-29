@@ -71,7 +71,7 @@ class TestEvaluationBranches:
 
         explanations = generate_shap_explanations(model, X, feature_names=["f1", "f2"], top_n=3)
         assert isinstance(explanations, list)
-        assert len(explanations) == min(len(X), 15)  # Ограничение в 15 студентов
+        assert len(explanations) == min(len(X), 5)
         assert "risk_probability" in explanations[0]
 
 

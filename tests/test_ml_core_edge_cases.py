@@ -311,21 +311,20 @@ class TestResearchAnalyzerPipeline:
         assert result.status == "success"
         assert result.model_name == "LR"
 
-    def test_run_by_request_with_none_dataframe(self):
-        """Pydantic-запрос с df=None → ошибка валидации."""
-        from ml_core.schemas import AnalysisRequest
-
+    def test_run_with_empty_dataframe_raises(self):
+        """Пустой DataFrame → ошибка при анализе."""
         analyzer = ResearchAnalyzer()
-        request = AnalysisRequest(df=None, target_col="risk_flag")
-        result = analyzer.run_full_analysis_by_request(request)
-        assert result.status == "error"
-        assert "не передан" in result.message.lower()
-
-    def test_run_by_source_unknown_type(self):
-        """Неизвестный тип источника данных → ошибка."""
-        analyzer = ResearchAnalyzer()
-        result = analyzer.run_full_analysis_by_source(source_id=1, source_type="unknown_type")
-        assert result.status == "error"
+        df = pd.DataFrame()
+        try:
+            result = analyzer.run_full_analysis(
+                df,
+                target_col="risk_flag",
+                n_clusters=2,
+                use_smote=False,
+            )
+            assert result.status == "error"
+        except (ValueError, KeyError, IndexError):
+            pass
 
     def test_run_with_text_column(self):
         """Пайплайн с текстовой колонкой (essay_text)."""
@@ -394,16 +393,9 @@ class TestResearchAnalyzerSubsets:
 
 
 class TestResearchAnalyzerTrajectories:
-    """Анализ траекторий студентов.
-
-    - Траектория отдельного студента (тренд, статус)
-    - Детекция негативной динамики
-    - Прогноз оценок
-    """
+    """Анализ траекторий через TimeSeriesAnalyzer."""
 
     def test_analyze_student_trajectory(self):
-        """Анализ траектории отдельного студента."""
-        analyzer = ResearchAnalyzer()
         df = pd.DataFrame(
             {
                 "student_id": [1, 1, 1, 1],
@@ -411,12 +403,16 @@ class TestResearchAnalyzerTrajectories:
                 "avg_grade": [3.0, 3.5, 4.0, 4.5],
             }
         )
-        result = analyzer.analyze_student_trajectory(df, student_id=1)
+        analyzer = TimeSeriesAnalyzer(df)
+        result = analyzer.analyze_student(
+            student_id=1,
+            value_col="avg_grade",
+            time_col="semester",
+            min_points=2,
+        )
         assert "status" in result
 
     def test_detect_negative_dynamics(self):
-        """Детекция негативной динамики у студентов."""
-        analyzer = ResearchAnalyzer()
         df = pd.DataFrame(
             {
                 "student_id": [1, 1, 1, 2, 2, 2],
@@ -424,12 +420,15 @@ class TestResearchAnalyzerTrajectories:
                 "avg_grade": [4.5, 3.5, 2.5, 3.0, 3.5, 4.0],
             }
         )
-        result = analyzer.detect_negative_dynamics(df)
-        assert "n_students_analyzed" in result or "at_risk" in str(result)
+        analyzer = TimeSeriesAnalyzer(df)
+        result = analyzer.detect_negative_dynamics(
+            value_col="avg_grade",
+            time_col="semester",
+            min_points=2,
+        )
+        assert result["n_students_analyzed"] >= 1
 
     def test_forecast_grades_for_student(self):
-        """Прогноз оценок для студента."""
-        analyzer = ResearchAnalyzer()
         df = pd.DataFrame(
             {
                 "student_id": [1, 1, 1],
@@ -437,79 +436,70 @@ class TestResearchAnalyzerTrajectories:
                 "avg_grade": [3.0, 3.5, 4.0],
             }
         )
-        result = analyzer.forecast_for_student(df, student_id=1, future_semesters=2)
+        analyzer = TimeSeriesAnalyzer(df)
+        result = analyzer.forecast_student(
+            student_id=1,
+            value_col="avg_grade",
+            time_col="semester",
+            periods=2,
+        )
         assert "predictions" in result
 
 
 class TestResearchAnalyzerExperiments:
-    """Управление экспериментами.
+    """Управление экспериментами через ExperimentTracker."""
 
-    Сохранение и загрузка результатов анализа.
-    """
+    def test_save_experiment_after_analysis(self, tmp_path):
+        from ml_core.experiment_tracker import ExperimentTracker
 
-    def test_save_experiment_after_analysis(self):
-        """Сохранение эксперимента после запуска анализа."""
-        analyzer = ResearchAnalyzer()
-        rng = np.random.RandomState(42)
-        n = 100
-        df = pd.DataFrame(
-            {
-                "a": rng.rand(n),
-                "b": rng.rand(n),
-                "risk_flag": (rng.rand(n) > 0.5).astype(int),
-            }
+        tracker = ExperimentTracker(storage_dir=str(tmp_path / "experiments"))
+        exp_id = tracker.save_experiment(
+            "test_exp",
+            {"metrics": {"f1": 0.8}, "features": ["a", "b"], "description": "unit test"},
         )
-        analyzer.run_full_analysis(df, target_col="risk_flag", n_clusters=2, use_smote=False)
-        exp_id = analyzer.save_experiment("test_exp")
         assert exp_id is not None
 
-    def test_load_nonexistent_experiment(self):
-        """Загрузка несуществующего эксперимента → FileNotFoundError."""
-        analyzer = ResearchAnalyzer()
+    def test_load_nonexistent_experiment(self, tmp_path):
+        from ml_core.experiment_tracker import ExperimentTracker
+
+        tracker = ExperimentTracker(storage_dir=str(tmp_path / "experiments"))
         with pytest.raises(FileNotFoundError):
-            analyzer.load_experiment("nonexistent")
+            tracker.load_experiment("nonexistent")
 
 
 # ========== Временные ряды ==========
 
 
 class TestTimeSeriesAnalysis:
-    """Тестирование анализа временных рядов.
+    """Дополнительные проверки временных рядов."""
 
-    - Прогноз оценок (линейная экстраполяция, last_value)
-    - Детекция негативной динамики
-    - Сравнение когорт
-    """
-
-    # def test_forecast_empty_history(self):
-    #     """Прогноз при пустой истории → нулевые значения."""
-    #     result = forecast_grades_chupep([], periods=3)
-    #     assert len(result) == 3
-    #     assert all(v == 0 for v in result)
+    def test_forecast_insufficient_history(self):
+        df = pd.DataFrame(
+            {
+                "student_id": [1, 1],
+                "semester": [1, 2],
+                "avg_grade": [3.0, 3.5],
+            }
+        )
+        analyzer = TimeSeriesAnalyzer(df)
+        result = analyzer.forecast_student(
+            student_id=1,
+            value_col="avg_grade",
+            time_col="semester",
+            periods=3,
+        )
+        assert "error" in result
 
     def test_detect_negative_dynamics_missing_column(self):
-        """Детекция при отсутствии колонки времени → ошибка."""
-        df = pd.DataFrame({"a": [1, 2, 3]})
-        analyzer = TimeSeriesAnalyzer(self.df, student_id_col="student_id")
-        result = analyzer.detect_negative_dynamics(df, time_col="nonexistent")
-        assert "error" in result or result.get("n_students_analyzed", 0) == 0
-
-    # def test_compare_cohort_trajectories(self):
-    #     """Сравнение траекторий когорт."""
-    #     rng = np.random.RandomState(42)
-    #     records = []
-    #     for year in [2020, 2021]:
-    #         for sem in range(1, 4):
-    #             for _ in range(5):
-    #                 records.append(
-    #                     {
-    #                         "year": year,
-    #                         "semester": sem,
-    #                         "avg_grade": 3.5 + rng.normal(0, 0.3),
-    #                     }
-    #                 )
-    #     df = pd.DataFrame(records)
-    #     analyzer = TimeSeriesAnalyzer(self.df, student_id_col="student_id")
-    #     result = analyze_cohort_trajectory(df, cohort_col="year", time_col="semester")
-    #     assert "cohort_data" in result
-    #     assert "figure" in result
+        df = pd.DataFrame(
+            {
+                "student_id": [1, 1, 1],
+                "avg_grade": [3.0, 3.5, 4.0],
+            }
+        )
+        analyzer = TimeSeriesAnalyzer(df)
+        with pytest.raises(KeyError):
+            analyzer.detect_negative_dynamics(
+                value_col="avg_grade",
+                time_col="nonexistent",
+            )

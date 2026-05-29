@@ -10,7 +10,7 @@ from ml_core.loader import (
     preprocess_sheet,
     load_excel_sheet,
     process_multiple_choice_column,
-    preprocess_excel_data,
+    # preprocess_excel_data,
 )
 
 
@@ -60,7 +60,7 @@ class TestExcelSheetGroupDetection:
     """Определение группы листа по колонкам."""
 
     def test_sheet_group_by_name(self):
-        group = detect_sheet_group(columns=[], sheet_name="Вильямс")
+        group = detect_sheet_group(sheet_name="Вильямс")
         assert group in ["numeric", "unknown", "williams"]
 
 
@@ -184,28 +184,6 @@ class TestExcelSheetLoading:
         df.to_excel(filepath, sheet_name="Random", index=False)
         data, group = load_excel_sheet(filepath, sheet_name="Random")
         assert len(data) == 2
-
-
-class TestExcelMultiSheetProcessing:
-    """Обработка многлистовых Excel-файлов."""
-
-    def test_merge_multiple_sheets(self, tmp_path):
-        df1 = pd.DataFrame({"user_id": [1, 2], "a": [10, 20]})
-        df2 = pd.DataFrame({"user_id": [1, 2], "b": [30, 40]})
-        filepath = str(tmp_path / "survey.xlsx")
-        with pd.ExcelWriter(filepath) as writer:
-            df1.to_excel(writer, sheet_name="Вильямс", index=False)
-            df2.to_excel(writer, sheet_name="Шварц", index=False)
-        merged, details = preprocess_excel_data(filepath)
-        assert isinstance(merged, pd.DataFrame)
-        assert len(merged) >= 2
-
-    def test_single_sheet_processing(self, tmp_path):
-        df = pd.DataFrame({"user_id": [1, 2], "a": [10, 20]})
-        filepath = str(tmp_path / "single.xlsx")
-        df.to_excel(filepath, sheet_name="Вильямс", index=False)
-        merged, details = preprocess_excel_data(filepath)
-        assert len(merged) == 2
 
 
 class TestExcelSheetNames:

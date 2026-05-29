@@ -59,19 +59,20 @@ def cache_result(func):
 
         try:
             redis_client.ping()
-        except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
+        except Exception as e:
             logger.debug(f"Redis unavailable: {e}. Skipping cache.")
             return func(*args, **kwargs)
 
-        key = _make_key(func.__name__, *args, **kwargs)
+        dataset_id = kwargs.get("dataset_id", "default")
+        key = _make_key(func.__name__, dataset_id, *args, **kwargs)
 
         # Попытка получить из кеша
         try:
             cached = redis_client.get(key)
             if cached:
                 return pickle.loads(cached)
-        except (ValueError, ImportError, AttributeError) as e:
-            logger.warning(f"SMOTE failed: {e}. Continuing without SMOTE.")
+        except (pickle.UnpicklingError, ValueError, ImportError, AttributeError, TypeError) as e:
+            logger.warning(f"Cache read failed for {func.__name__}: {e}. Recomputing.")
 
         # Вызов функции
         result = func(*args, **kwargs)
@@ -79,7 +80,7 @@ def cache_result(func):
         # Сохранение в кеш
         try:
             redis_client.setex(key, CACHE_TTL, pickle.dumps(result))
-        except (redis.exceptions.RedisError, pickle.PickleError, TypeError) as e:
+        except Exception as e:
             logger.warning(f"Failed to cache result for {func.__name__}: {e}")
 
         return result
