@@ -1,7 +1,7 @@
 import { memo, useState, useRef, useEffect } from "react";
 import Plot from "react-plotly.js";
 import { savePlotToFile } from "../api";
-import downloadJSONAsCSV from "./utils/csvHelpers";
+import { downloadJSONAsCSV } from "../utils/csvHelpers";
 
 const PlotChart = memo(({ data, title, height = 400 }) => {
   const [isSaving, setIsSaving] = useState(false);
