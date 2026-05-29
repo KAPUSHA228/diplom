@@ -1,8 +1,8 @@
 """Тесты для ml_core/evaluation.py"""
+
 import pytest
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from ml_core.evaluation import (
     calculate_metrics,
@@ -19,11 +19,13 @@ from ml_core.evaluation import (
 def trained_model(rng=np.random.RandomState(42)):
     """Обученная модель RandomForest для тестов SHAP (совместима с shap без masker)."""
     n = 100
-    X = pd.DataFrame({
-        "f1": rng.normal(size=n),
-        "f2": rng.normal(size=n),
-        "f3": rng.normal(size=n),
-    })
+    X = pd.DataFrame(
+        {
+            "f1": rng.normal(size=n),
+            "f2": rng.normal(size=n),
+            "f3": rng.normal(size=n),
+        }
+    )
     y = (X["f1"] + 0.5 * X["f2"] > 0).astype(int)
     model = RandomForestClassifier(n_estimators=10, random_state=42)
     model.fit(X, y)
@@ -87,16 +89,12 @@ class TestShapExplanations:
 
     def test_generate_shap_returns_list(self, trained_model):
         model, X, y, names = trained_model
-        explanations = generate_shap_explanations(
-            model, X, names, threshold=0.5, top_n=3
-        )
+        explanations = generate_shap_explanations(model, X, names, threshold=0.5, top_n=3)
         assert isinstance(explanations, list)
 
     def test_explanation_has_required_keys(self, trained_model):
         model, X, y, names = trained_model
-        explanations = generate_shap_explanations(
-            model, X, names, threshold=0.5, top_n=3
-        )
+        explanations = generate_shap_explanations(model, X, names, threshold=0.5, top_n=3)
         if len(explanations) > 0:
             exp = explanations[0]
             assert "student_index" in exp
@@ -106,16 +104,12 @@ class TestShapExplanations:
 
     def test_batch_explanations_respects_top_n(self, trained_model):
         model, X, y, names = trained_model
-        explanations = generate_batch_explanations(
-            model, X, names, threshold=0.5, top_n=3
-        )
+        explanations = generate_batch_explanations(model, X, names, threshold=0.5, top_n=3)
         assert len(explanations) <= 3
 
     def test_detailed_explanation_is_string(self, trained_model):
         model, X, y, names = trained_model
-        result = generate_detailed_explanation(
-            model, X, student_idx=0, feature_names=names, threshold=0.5
-        )
+        result = generate_detailed_explanation(model, X, student_idx=0, feature_names=names, threshold=0.5)
         assert isinstance(result, str)
         assert len(result) > 0
 

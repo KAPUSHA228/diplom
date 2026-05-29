@@ -1,4 +1,5 @@
 """Тесты для ml_core/drift_detector.py"""
+
 import pytest
 import pandas as pd
 import numpy as np
@@ -6,7 +7,6 @@ import json
 import os
 from ml_core.drift_detector import (
     DataDriftDetector,
-    generate_recommendations,
 )
 
 
@@ -14,22 +14,26 @@ from ml_core.drift_detector import (
 def reference_data(rng=np.random.RandomState(42)):
     """Эталонные данные для дрейфа."""
     n = 200
-    return pd.DataFrame({
-        "num_a": rng.normal(50, 10, n),
-        "num_b": rng.uniform(0, 100, n),
-        "cat_a": rng.choice(["X", "Y", "Z"], n),
-    })
+    return pd.DataFrame(
+        {
+            "num_a": rng.normal(50, 10, n),
+            "num_b": rng.uniform(0, 100, n),
+            "cat_a": rng.choice(["X", "Y", "Z"], n),
+        }
+    )
 
 
 @pytest.fixture
 def drifted_data(rng=np.random.RandomState(99)):
     """Данные со сдвигом (дрейфом)."""
     n = 200
-    return pd.DataFrame({
-        "num_a": rng.normal(70, 15, n),  # сдвинуто с 50 до 70
-        "num_b": rng.uniform(0, 100, n),  # без изменений
-        "cat_a": rng.choice(["X", "Y", "W"], n),  # новая категория W
-    })
+    return pd.DataFrame(
+        {
+            "num_a": rng.normal(70, 15, n),  # сдвинуто с 50 до 70
+            "num_b": rng.uniform(0, 100, n),  # без изменений
+            "cat_a": rng.choice(["X", "Y", "W"], n),  # новая категория W
+        }
+    )
 
 
 class TestDataDriftDetector:
@@ -53,8 +57,12 @@ class TestDataDriftDetector:
         detector = DataDriftDetector(reference_data)
         report = detector.detect_drift(reference_data)
         expected_keys = [
-            "overall_drift", "drift_percentage", "drifted_features",
-            "feature_reports", "recommendations", "data_quality",
+            "overall_drift",
+            "drift_percentage",
+            "drifted_features",
+            "feature_reports",
+            "recommendations",
+            "data_quality",
         ]
         for key in expected_keys:
             assert key in report, f"Missing key: {key}"
@@ -109,9 +117,11 @@ class TestGenerateRecommendations:
 
     def test_no_drift_no_recommendations(self):
         """При отсутствии дрейфа рекомендации пустые."""
-        df = pd.DataFrame({
-            "num_a": np.random.randn(100),
-        })
+        df = pd.DataFrame(
+            {
+                "num_a": np.random.randn(100),
+            }
+        )
         detector = DataDriftDetector(df)
         report = detector.detect_drift(df)
         result = report["recommendations"]

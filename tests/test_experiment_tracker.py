@@ -1,4 +1,5 @@
 """Тесты для ml_core/experiment_tracker.py"""
+
 import pytest
 import os
 import json
@@ -59,6 +60,7 @@ class TestExperimentTracker:
 
     def test_list_sorted_by_time(self, tracker):
         import time
+
         tracker.save_experiment("exp1", {"f1": 0.8})
         time.sleep(0.1)
         tracker.save_experiment("exp2", {"f1": 0.9})

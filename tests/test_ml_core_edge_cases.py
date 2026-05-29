@@ -27,7 +27,6 @@ from ml_core.drift_detector import (
 from ml_core.analyzer import ResearchAnalyzer
 from ml_core.timeseries import TimeSeriesAnalyzer
 
-
 matplotlib.use("Agg")
 from unittest.mock import patch
 from sklearn.linear_model import LogisticRegression

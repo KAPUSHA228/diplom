@@ -1,9 +1,9 @@
 """Тесты для ml_core/models.py"""
+
 import pytest
 import pandas as pd
 import numpy as np
 import os
-import shutil
 from ml_core.models import ModelTrainer
 
 
@@ -17,11 +17,13 @@ def trainer(tmp_path):
 def train_data(rng=np.random.RandomState(42)):
     """Простые train данные."""
     n = 200
-    X = pd.DataFrame({
-        "f1": rng.normal(size=n),
-        "f2": rng.normal(size=n),
-        "f3": rng.normal(size=n),
-    })
+    X = pd.DataFrame(
+        {
+            "f1": rng.normal(size=n),
+            "f2": rng.normal(size=n),
+            "f3": rng.normal(size=n),
+        }
+    )
     y = (X["f1"] + X["f2"] > 0).astype(int)
     return X, y
 
@@ -59,9 +61,7 @@ class TestModelTrainerTrainBest:
         y_test = y.iloc[:40]
         X_train = X.iloc[40:]
         y_train = y.iloc[40:]
-        model, name, metrics = trainer.train_best_model(
-            X_train, y_train, X_test, y_test
-        )
+        model, name, metrics = trainer.train_best_model(X_train, y_train, X_test, y_test)
         assert name in ["LR", "RF", "XGB"]
         assert "f1" in metrics.get("test", {})
         assert "roc_auc" in metrics.get("test", {})
@@ -72,9 +72,7 @@ class TestModelTrainerTuneXGBoost:
 
     def test_returns_estimator_params_score(self, trainer, train_data):
         X, y = train_data
-        best_model, best_params, best_score = trainer.tune_xgboost(
-            X, y, n_iter=3, cv_folds=2
-        )
+        best_model, best_params, best_score = trainer.tune_xgboost(X, y, n_iter=3, cv_folds=2)
         assert best_params is not None
         assert 0 <= best_score <= 1
 

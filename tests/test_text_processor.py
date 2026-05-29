@@ -1,5 +1,5 @@
 """Тесты для ml_core/text_processor.py"""
-import pytest
+
 import pandas as pd
 from ml_core.text_processor import extract_text_features
 

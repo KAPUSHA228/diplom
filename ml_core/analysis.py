@@ -12,7 +12,6 @@ from ml_core.error_handler import logger
 from ml_core.config import config  # общая утилита
 from ml_core.cache import cache_result  # кеширование
 
-
 # ---- Корреляционный анализ ----
 
 
